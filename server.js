@@ -1,0 +1,275 @@
+const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
+
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+const PORT = parseInt(process.env.PORT, 10) || 3000;
+const ONLYOFFICE_URL = (process.env.ONLYOFFICE_URL || 'http://localhost:8080').replace(/\/+$/, '');
+const APP_URL = (process.env.APP_URL || `http://host.docker.internal:${PORT}`).replace(/\/+$/, '');
+const JWT_SECRET = process.env.JWT_SECRET || '';
+const UPLOADS_DIR = path.join(__dirname, 'uploads');
+
+if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+// ---------------------------------------------------------------------------
+// Extension → documentType / fileType mappings
+// ---------------------------------------------------------------------------
+const EXT_MAP = {
+  // Word
+  docx: { documentType: 'word', fileType: 'docx' },
+  doc:  { documentType: 'word', fileType: 'doc' },
+  odt:  { documentType: 'word', fileType: 'odt' },
+  rtf:  { documentType: 'word', fileType: 'rtf' },
+  txt:  { documentType: 'word', fileType: 'txt' },
+  pdf:  { documentType: 'word', fileType: 'pdf' },
+  // Spreadsheet
+  xlsx: { documentType: 'cell', fileType: 'xlsx' },
+  xls:  { documentType: 'cell', fileType: 'xls' },
+  ods:  { documentType: 'cell', fileType: 'ods' },
+  csv:  { documentType: 'cell', fileType: 'csv' },
+  // Presentation
+  pptx: { documentType: 'slide', fileType: 'pptx' },
+  ppt:  { documentType: 'slide', fileType: 'ppt' },
+  odp:  { documentType: 'slide', fileType: 'odp' },
+};
+
+function extInfo(filename) {
+  const ext = path.extname(filename).replace('.', '').toLowerCase();
+  return EXT_MAP[ext] || null;
+}
+
+// ---------------------------------------------------------------------------
+// File-metadata store (simple JSON on disk)
+// ---------------------------------------------------------------------------
+const META_FILE = path.join(UPLOADS_DIR, '_meta.json');
+
+function loadMeta() {
+  if (!fs.existsSync(META_FILE)) return {};
+  try { return JSON.parse(fs.readFileSync(META_FILE, 'utf8')); }
+  catch { return {}; }
+}
+
+function saveMeta(meta) {
+  fs.writeFileSync(META_FILE, JSON.stringify(meta, null, 2));
+}
+
+// ---------------------------------------------------------------------------
+// Multer setup – sanitise filenames
+// ---------------------------------------------------------------------------
+const ALLOWED_EXTENSIONS = new Set(Object.keys(EXT_MAP));
+
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).replace('.', '').toLowerCase();
+    const safeName = file.originalname
+      .replace(/[^a-zA-Z0-9._-]/g, '_')
+      .substring(0, 200);
+    const unique = crypto.randomUUID().slice(0, 8);
+    cb(null, `${unique}_${safeName}`);
+  },
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100 MB
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).replace('.', '').toLowerCase();
+    if (!ALLOWED_EXTENSIONS.has(ext)) {
+      return cb(new Error(`Unsupported file type: .${ext}`));
+    }
+    cb(null, true);
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Express app
+// ---------------------------------------------------------------------------
+const app = express();
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+app.use('/uploads', express.static(UPLOADS_DIR));
+
+// ---- API: list files ----
+app.get('/api/files', (_req, res) => {
+  const meta = loadMeta();
+  const files = Object.entries(meta).map(([id, m]) => ({
+    id,
+    name: m.originalName,
+    storedName: m.storedName,
+    size: m.size,
+    type: m.documentType,
+    uploadedAt: m.uploadedAt,
+  }));
+  files.sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt));
+  res.json(files);
+});
+
+// ---- API: upload file ----
+app.post('/api/upload', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file provided' });
+
+  const info = extInfo(req.file.originalname);
+  if (!info) return res.status(400).json({ error: 'Unsupported file type' });
+
+  const id = crypto.randomUUID();
+  const meta = loadMeta();
+  meta[id] = {
+    originalName: req.file.originalname,
+    storedName: req.file.filename,
+    size: req.file.size,
+    documentType: info.documentType,
+    fileType: info.fileType,
+    uploadedAt: new Date().toISOString(),
+  };
+  saveMeta(meta);
+
+  res.json({ id, name: req.file.originalname });
+});
+
+// ---- API: delete file ----
+app.delete('/api/files/:id', (req, res) => {
+  const meta = loadMeta();
+  const entry = meta[req.params.id];
+  if (!entry) return res.status(404).json({ error: 'Not found' });
+
+  const filePath = path.join(UPLOADS_DIR, entry.storedName);
+  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  delete meta[req.params.id];
+  saveMeta(meta);
+  res.json({ ok: true });
+});
+
+// ---- API: get editor config for a file ----
+app.get('/api/editor-config/:id', (req, res) => {
+  const meta = loadMeta();
+  const entry = meta[req.params.id];
+  if (!entry) return res.status(404).json({ error: 'Not found' });
+
+  const fileUrl = `${APP_URL}/uploads/${encodeURIComponent(entry.storedName)}`;
+  const callbackUrl = `${APP_URL}/api/callback/${req.params.id}`;
+
+  const config = {
+    document: {
+      fileType: entry.fileType,
+      key: req.params.id + '_' + Date.now(),
+      title: entry.originalName,
+      url: fileUrl,
+      permissions: {
+        download: true,
+        edit: true,
+        print: true,
+        review: true,
+      },
+    },
+    documentType: entry.documentType,
+    editorConfig: {
+      callbackUrl,
+      lang: 'en',
+      mode: 'edit',
+      customization: {
+        autosave: true,
+        forcesave: true,
+      },
+    },
+  };
+
+  // Sign with JWT – OnlyOffice uses the token both in the config object
+  // and expects the callback to carry it in the Authorization header.
+  if (JWT_SECRET) {
+    config.token = jwt.sign(config, JWT_SECRET);
+  }
+
+  res.json({
+    config,
+    onlyofficeUrl: ONLYOFFICE_URL,
+    jwtEnabled: !!JWT_SECRET,
+  });
+});
+
+// ---- API: OnlyOffice save callback ----
+app.post('/api/callback/:id', (req, res) => {
+  const { status, url } = req.body;
+
+  // Status 2 = document ready for saving, 6 = force-save
+  if ((status === 2 || status === 6) && url) {
+    const meta = loadMeta();
+    const entry = meta[req.params.id];
+    if (entry) {
+      const https = url.startsWith('https') ? require('https') : require('http');
+      const filePath = path.join(UPLOADS_DIR, entry.storedName);
+
+      https.get(url, (stream) => {
+        const writeStream = fs.createWriteStream(filePath);
+        stream.pipe(writeStream);
+        writeStream.on('finish', () => writeStream.close());
+      });
+    }
+  }
+
+  // OnlyOffice expects { "error": 0 }
+  res.json({ error: 0 });
+});
+
+// ---- API: create blank document ----
+app.post('/api/create', (req, res) => {
+  const { name, type } = req.body; // type: "docx" | "xlsx" | "pptx"
+  const allowed = { docx: 'word', xlsx: 'cell', pptx: 'slide' };
+  if (!allowed[type]) return res.status(400).json({ error: 'Invalid type' });
+
+  const templateDir = path.join(__dirname, 'templates');
+  const templateFile = path.join(templateDir, `blank.${type}`);
+  if (!fs.existsSync(templateFile)) {
+    return res.status(500).json({ error: `Template blank.${type} not found` });
+  }
+
+  const id = crypto.randomUUID();
+  const safeName = (name || `Untitled.${type}`).replace(/[^a-zA-Z0-9._-]/g, '_').substring(0, 200);
+  const storedName = `${crypto.randomUUID().slice(0, 8)}_${safeName}`;
+
+  fs.copyFileSync(templateFile, path.join(UPLOADS_DIR, storedName));
+
+  const meta = loadMeta();
+  const stat = fs.statSync(path.join(UPLOADS_DIR, storedName));
+  meta[id] = {
+    originalName: name || `Untitled.${type}`,
+    storedName,
+    size: stat.size,
+    documentType: allowed[type],
+    fileType: type,
+    uploadedAt: new Date().toISOString(),
+  };
+  saveMeta(meta);
+  res.json({ id, name: meta[id].originalName });
+});
+
+// ---- API: rename file ----
+app.patch('/api/files/:id', (req, res) => {
+  const { name } = req.body;
+  if (!name || typeof name !== 'string') return res.status(400).json({ error: 'Name required' });
+
+  const meta = loadMeta();
+  const entry = meta[req.params.id];
+  if (!entry) return res.status(404).json({ error: 'Not found' });
+
+  entry.originalName = name.substring(0, 200);
+  saveMeta(meta);
+  res.json({ ok: true });
+});
+
+// ---- Serve editor page ----
+app.get('/editor/:id', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'editor.html'));
+});
+
+// ---- Start ----
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`OnlyOffice Dashboard running on http://0.0.0.0:${PORT}`);
+  console.log(`OnlyOffice URL: ${ONLYOFFICE_URL}`);
+  console.log(`App callback URL: ${APP_URL}`);
+});

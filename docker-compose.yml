@@ -1,0 +1,16 @@
+services:
+  dashboard:
+    build: .
+    container_name: onlyoffice-dashboard
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      ONLYOFFICE_URL: ${ONLYOFFICE_URL}
+      APP_URL: ${APP_URL}
+      PORT: ${PORT:-3000}
+      JWT_SECRET: ${JWT_SECRET}
+    volumes:
+      - ./uploads:/app/uploads
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

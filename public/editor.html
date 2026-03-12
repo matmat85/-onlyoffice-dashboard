@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OnlyOffice Editor</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; font-family: system-ui, sans-serif; background: #1e2430; }
+
+    #header {
+      height: 44px;
+      background: #1e2430;
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+    #header a {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #8fa3c0;
+      text-decoration: none;
+      font-size: 13px;
+      transition: color .15s;
+    }
+    #header a:hover { color: #fff; }
+    #header a svg { width: 16px; height: 16px; }
+    #docTitle {
+      flex: 1;
+      color: #e2eaf5;
+      font-size: 14px;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #editorWrap {
+      width: 100%;
+      height: calc(100% - 44px);
+    }
+    #editor {
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+    #loadingScreen {
+      position: fixed;
+      inset: 0;
+      background: #1e2430;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      color: #8fa3c0;
+      font-size: 14px;
+      z-index: 100;
+    }
+    .spinner {
+      width: 36px;
+      height: 36px;
+      border: 3px solid #2e3a50;
+      border-top-color: #446995;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #errorScreen {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: #1e2430;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      color: #e84b4b;
+      font-size: 15px;
+      z-index: 100;
+    }
+    #errorScreen.visible { display: flex; }
+    #errorScreen p { color: #8fa3c0; font-size: 13px; max-width: 400px; text-align: center; }
+    #errorScreen a { color: #6ea8fe; text-decoration: none; font-size: 13px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div id="header">
+    <a href="/" id="backLink">
+      <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clip-rule="evenodd"/></svg>
+      Dashboard
+    </a>
+    <span id="docTitle">Loading…</span>
+  </div>
+
+  <div id="editorWrap">
+    <div id="editor"></div>
+  </div>
+
+  <div id="loadingScreen">
+    <div class="spinner"></div>
+    <span>Loading editor…</span>
+  </div>
+
+  <div id="errorScreen">
+    <svg viewBox="0 0 24 24" fill="currentColor" style="width:40px;height:40px"><path d="M12 2a10 10 0 100 20A10 10 0 0012 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+    <strong id="errorTitle">Failed to load editor</strong>
+    <p id="errorMsg">Could not connect to the OnlyOffice Document Server.</p>
+    <a href="/">← Back to Dashboard</a>
+  </div>
+
+  <script>
+    function initEditor(config) {
+      try {
+        // eslint-disable-next-line no-undef
+        new DocsAPI.DocEditor('editor', config);
+        document.getElementById('loadingScreen').style.display = 'none';
+      } catch (e) {
+        showError('Editor initialisation failed', e.message);
+      }
+    }
+
+    function showError(title, msg) {
+      document.getElementById('loadingScreen').style.display = 'none';
+      document.getElementById('errorTitle').textContent = title;
+      if (msg) document.getElementById('errorMsg').textContent = msg;
+      document.getElementById('errorScreen').classList.add('visible');
+    }
+
+    (async () => {
+      const fileId = location.pathname.split('/').pop();
+      if (!fileId) { showError('No file ID in URL'); return; }
+
+      let cfg;
+      try {
+        const resp = await fetch(`/api/editor-config/${fileId}`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        cfg = await resp.json();
+      } catch (e) {
+        showError('Could not fetch editor config', e.message);
+        return;
+      }
+
+      document.getElementById('docTitle').textContent = cfg.config.document.title;
+      document.title = cfg.config.document.title + ' \u2014 OnlyOffice';
+
+      // Load the OnlyOffice API script
+      const script = document.createElement('script');
+      script.src = `${cfg.onlyofficeUrl}/web-apps/apps/api/documents/api.js`;
+      script.onload = () => initEditor(cfg.config);
+      script.onerror = () => showError('Could not load OnlyOffice API', `Make sure the Document Server is reachable at: ${cfg.onlyofficeUrl}`);
+      document.head.appendChild(script);
+    })();
+  </script>
+</body>
+</html>

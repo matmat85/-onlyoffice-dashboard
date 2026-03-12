@@ -1,0 +1,17 @@
+{
+  "name": "onlyoffice-dashboard",
+  "version": "1.0.0",
+  "description": "Web dashboard for OnlyOffice Document Server",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "setup": "node generate-templates.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.1.1",
+    "uuid": "^10.0.0"
+  }
+}
