@@ -251,10 +251,19 @@ app.post('/api/callback/:id', (req, res) => {
     const meta = loadMeta();
     const entry = meta[req.params.id];
     if (entry) {
-      const https = url.startsWith('https') ? require('https') : require('http');
+      const proto = url.startsWith('https') ? require('https') : require('http');
       const filePath = path.join(UPLOADS_DIR, entry.storedName);
 
-      https.get(url, (stream) => {
+      // rejectUnauthorized: false — OnlyOffice may use a self-signed cert on the LAN
+      const opts = new URL(url);
+      const reqOpts = {
+        hostname: opts.hostname,
+        port: opts.port,
+        path: opts.pathname + opts.search,
+        rejectUnauthorized: false,
+      };
+
+      proto.get(reqOpts, (stream) => {
         if (stream.statusCode && stream.statusCode >= 400) {
           console.error(`[callback] failed download for ${req.params.id} - HTTP ${stream.statusCode}`);
           stream.resume();
