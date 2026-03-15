@@ -43,6 +43,37 @@ function extInfo(filename) {
   return EXT_MAP[ext] || null;
 }
 
+function validateTemplateFile(templateFile, type) {
+  if (!fs.existsSync(templateFile)) {
+    return { ok: false, reason: `Template blank.${type} not found` };
+  }
+
+  const buf = fs.readFileSync(templateFile);
+  if (buf.length < 512) {
+    return { ok: false, reason: `Template blank.${type} is too small to be a valid Office file` };
+  }
+
+  // Office Open XML files are ZIP containers and should start with PK\x03\x04.
+  if (!(buf[0] === 0x50 && buf[1] === 0x4B && buf[2] === 0x03 && buf[3] === 0x04)) {
+    return { ok: false, reason: `Template blank.${type} is not a valid OOXML (ZIP) file` };
+  }
+
+  const content = buf.toString('latin1');
+  const baseRequired = ['[Content_Types].xml', '_rels/.rels'];
+  const perType = {
+    docx: ['word/document.xml'],
+    xlsx: ['xl/workbook.xml'],
+    pptx: ['ppt/presentation.xml'],
+  };
+  const required = [...baseRequired, ...(perType[type] || [])];
+  const missing = required.filter((entry) => !content.includes(entry));
+  if (missing.length) {
+    return { ok: false, reason: `Template blank.${type} is missing required OOXML parts: ${missing.join(', ')}` };
+  }
+
+  return { ok: true };
+}
+
 function resolveAppUrl(req) {
   if (process.env.APP_URL && process.env.APP_URL.trim()) return APP_URL;
   const protoHeader = req.headers['x-forwarded-proto'];
@@ -275,8 +306,11 @@ app.post('/api/create', (req, res) => {
 
   const templateDir = path.join(__dirname, 'templates');
   const templateFile = path.join(templateDir, `blank.${type}`);
-  if (!fs.existsSync(templateFile)) {
-    return res.status(500).json({ error: `Template blank.${type} not found` });
+  const templateValidation = validateTemplateFile(templateFile, type);
+  if (!templateValidation.ok) {
+    return res.status(500).json({
+      error: `${templateValidation.reason}. Replace templates/blank.${type} with a real blank Office file created by Excel/Word/PowerPoint (or LibreOffice/OnlyOffice) and retry.`,
+    });
   }
 
   const id = crypto.randomUUID();

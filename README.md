@@ -91,6 +91,8 @@ mkdir -p templates
 
 You can grab minimal blank templates from any Office installation or download them from the OnlyOffice GitHub sdkjs-forms repository.
 
+The app validates these templates before creating new documents. If a template is missing/corrupt/invalid OOXML, the API returns a clear error instead of creating a file that hangs in the editor.
+
 ---
 
 ## File storage
