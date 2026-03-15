@@ -24,8 +24,6 @@ const composeModal     = document.getElementById('composeModal');
 const emailBadge       = document.getElementById('emailBadge');
 const btnEmailNext     = document.getElementById('btnEmailNext');
 
-let emailPanelInitialised = false;
-
 // ── Auth status check ─────────────────────────────────────────
 async function checkAuthStatus() {
   try {
@@ -38,9 +36,6 @@ async function checkAuthStatus() {
 
 // ── Init email panel ──────────────────────────────────────────
 async function initEmailPanel() {
-  if (emailPanelInitialised) return;
-  emailPanelInitialised = true;
-
   await checkAuthStatus();
   if (!emailState.authenticated) {
     emailLayout.classList.add('hidden');
@@ -57,9 +52,18 @@ function isEmailRoute() {
   return (location.hash || '').replace(/^#\/?/, '').trim().toLowerCase() === 'email';
 }
 
+function ensureEmailPanelVisible() {
+  const promptHidden = emailSignInPrmt.classList.contains('hidden');
+  const layoutHidden = emailLayout.classList.contains('hidden');
+  if (promptHidden && layoutHidden) {
+    emailSignInPrmt.classList.remove('hidden');
+  }
+}
+
 document.addEventListener('app:route-change', (event) => {
   if (event.detail?.route === 'email') {
     initEmailPanel();
+    ensureEmailPanelVisible();
   }
 });
 
@@ -263,14 +267,13 @@ function formatEmailDate(dateStr) {
 
 // ── Startup ───────────────────────────────────────────────────
 (async () => {
-  await checkAuthStatus();
+  await initEmailPanel();
   if (emailState.authenticated) {
     updateUnreadBadge();
     setInterval(updateUnreadBadge, 60_000);
   }
-  if (isEmailRoute()) {
-    initEmailPanel();
-  }
+  if (isEmailRoute()) await initEmailPanel();
+  ensureEmailPanelVisible();
 })();
 
 
