@@ -243,7 +243,7 @@ btnEmailNext?.addEventListener('click', () => loadMessages(true));
 
 // ── Logout ────────────────────────────────────────────────────
 btnLogout?.addEventListener('click', async () => {
-  await fetch('/auth/google/logout', { method: 'POST' });
+  await fetch('/auth/logout', { method: 'POST' });
   location.href = '/login';
 });
 

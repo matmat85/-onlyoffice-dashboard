@@ -137,13 +137,6 @@ router.get('/auth/google/status', (req, res) => {
   res.json({ authenticated: !!tokens, email: user.email, name: user.name, picture: user.picture });
 });
 
-router.post('/auth/google/logout', (req, res) => {
-  req.session.destroy(() => {
-    res.clearCookie('connect.sid');
-    res.json({ ok: true });
-  });
-});
-
 // ---------------------------------------------------------------------------
 // Gmail API routes  (session user required)
 // ---------------------------------------------------------------------------

@@ -445,6 +445,14 @@ app.get('/login', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 
+// Unified logout for local and Google-authenticated sessions.
+app.post('/auth/logout', (req, res) => {
+  req.session.destroy(() => {
+    res.clearCookie('connect.sid');
+    res.json({ ok: true });
+  });
+});
+
 // Gate the dashboard index — must come before express.static picks it up
 app.get('/', requireLogin, (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
