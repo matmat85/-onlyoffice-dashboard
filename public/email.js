@@ -29,7 +29,7 @@ let emailPanelInitialised = false;
 // ── Auth status check ─────────────────────────────────────────
 async function checkAuthStatus() {
   try {
-    const res = await fetch('/auth/status');
+    const res = await fetch('/auth/google/status');
     const { authenticated, email } = await res.json();
     emailState.authenticated = authenticated;
     emailState.userEmail = email || null;
