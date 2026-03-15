@@ -59,6 +59,21 @@ node server.js
 
 > **Important:** `APP_URL` must be reachable from inside the OnlyOffice container. If both containers are on the same Docker network, use the service name (e.g. `http://dashboard:3000`). When running Docker Desktop on Windows/Mac, `host.docker.internal` resolves to the host machine.
 
+If `APP_URL` is not set, the server now falls back to the incoming request host/protocol when building document and callback URLs.
+
+---
+
+## Debugging editor load issues
+
+If the editor shell appears but the document never fully opens, check:
+
+1. `http://<dashboard-host>:3000/api/debug/<file-id>`
+2. `fileExists` should be `true`
+3. `fileUrl` should be reachable from the OnlyOffice Document Server host/container
+4. `jwtEnabled` should match your Document Server JWT setting and secret
+
+The server also logs editor-config and callback details to help diagnose URL/JWT/network mismatches.
+
 ---
 
 ## Blank document templates

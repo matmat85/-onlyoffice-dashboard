@@ -43,6 +43,15 @@ function extInfo(filename) {
   return EXT_MAP[ext] || null;
 }
 
+function resolveAppUrl(req) {
+  if (process.env.APP_URL && process.env.APP_URL.trim()) return APP_URL;
+  const protoHeader = req.headers['x-forwarded-proto'];
+  const forwardedProto = Array.isArray(protoHeader) ? protoHeader[0] : (protoHeader || '');
+  const proto = forwardedProto.split(',')[0].trim() || req.protocol;
+  const host = req.headers['x-forwarded-host'] || req.get('host');
+  return `${proto}://${host}`.replace(/\/+$/, '');
+}
+
 // ---------------------------------------------------------------------------
 // File-metadata store (simple JSON on disk)
 // ---------------------------------------------------------------------------
@@ -151,8 +160,9 @@ app.get('/api/editor-config/:id', (req, res) => {
   const entry = meta[req.params.id];
   if (!entry) return res.status(404).json({ error: 'Not found' });
 
-  const fileUrl = `${APP_URL}/uploads/${encodeURIComponent(entry.storedName)}`;
-  const callbackUrl = `${APP_URL}/api/callback/${req.params.id}`;
+  const appBaseUrl = resolveAppUrl(req);
+  const fileUrl = `${appBaseUrl}/uploads/${encodeURIComponent(entry.storedName)}`;
+  const callbackUrl = `${appBaseUrl}/api/callback/${req.params.id}`;
 
   const config = {
     document: {
@@ -185,6 +195,8 @@ app.get('/api/editor-config/:id', (req, res) => {
     config.token = jwt.sign(config, JWT_SECRET);
   }
 
+  console.log(`[editor-config] id=${req.params.id} fileUrl=${fileUrl} callbackUrl=${callbackUrl} jwt=${JWT_SECRET ? 'on' : 'off'}`);
+
   res.json({
     config,
     onlyofficeUrl: ONLYOFFICE_URL,
@@ -196,6 +208,8 @@ app.get('/api/editor-config/:id', (req, res) => {
 app.post('/api/callback/:id', (req, res) => {
   const { status, url } = req.body;
 
+  console.log(`[callback] id=${req.params.id} status=${status} hasUrl=${!!url}`);
+
   // Status 2 = document ready for saving, 6 = force-save
   if ((status === 2 || status === 6) && url) {
     const meta = loadMeta();
@@ -205,15 +219,52 @@ app.post('/api/callback/:id', (req, res) => {
       const filePath = path.join(UPLOADS_DIR, entry.storedName);
 
       https.get(url, (stream) => {
+        if (stream.statusCode && stream.statusCode >= 400) {
+          console.error(`[callback] failed download for ${req.params.id} - HTTP ${stream.statusCode}`);
+          stream.resume();
+          return;
+        }
         const writeStream = fs.createWriteStream(filePath);
         stream.pipe(writeStream);
         writeStream.on('finish', () => writeStream.close());
+        writeStream.on('error', (err) => console.error(`[callback] write error for ${req.params.id}:`, err.message));
+      }).on('error', (err) => {
+        console.error(`[callback] download error for ${req.params.id}:`, err.message);
       });
+    } else {
+      console.warn(`[callback] metadata missing for id=${req.params.id}`);
     }
   }
 
   // OnlyOffice expects { "error": 0 }
   res.json({ error: 0 });
+});
+
+// ---- API: debug a file integration ----
+app.get('/api/debug/:id', (req, res) => {
+  const meta = loadMeta();
+  const entry = meta[req.params.id];
+  if (!entry) return res.status(404).json({ error: 'Not found' });
+
+  const appBaseUrl = resolveAppUrl(req);
+  const fileUrl = `${appBaseUrl}/uploads/${encodeURIComponent(entry.storedName)}`;
+  const callbackUrl = `${appBaseUrl}/api/callback/${req.params.id}`;
+  const filePath = path.join(UPLOADS_DIR, entry.storedName);
+
+  res.json({
+    id: req.params.id,
+    onlyofficeUrl: ONLYOFFICE_URL,
+    appUrlUsed: appBaseUrl,
+    jwtEnabled: !!JWT_SECRET,
+    fileUrl,
+    callbackUrl,
+    fileExists: fs.existsSync(filePath),
+    fileSize: fs.existsSync(filePath) ? fs.statSync(filePath).size : 0,
+    storedName: entry.storedName,
+    originalName: entry.originalName,
+    documentType: entry.documentType,
+    fileType: entry.fileType,
+  });
 });
 
 // ---- API: create blank document ----

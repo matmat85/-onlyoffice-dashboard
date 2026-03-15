@@ -112,11 +112,38 @@
   </div>
 
   <script>
+    let editorReady = false;
+
     function initEditor(config) {
       try {
+        const withEvents = {
+          ...config,
+          events: {
+            ...(config.events || {}),
+            onDocumentReady: function() {
+              editorReady = true;
+              document.getElementById('loadingScreen').style.display = 'none';
+            },
+            onError: function(event) {
+              const data = event && event.data ? event.data : {};
+              const code = typeof data.errorCode !== 'undefined' ? `code ${data.errorCode}` : 'unknown code';
+              const message = data.errorDescription || data.errorMessage || 'No details returned by OnlyOffice';
+              showError('OnlyOffice reported an error', `${code}: ${message}`);
+            },
+          },
+        };
+
         // eslint-disable-next-line no-undef
-        new DocsAPI.DocEditor('editor', config);
-        document.getElementById('loadingScreen').style.display = 'none';
+        new DocsAPI.DocEditor('editor', withEvents);
+
+        setTimeout(() => {
+          if (!editorReady) {
+            showError(
+              'Editor is taking too long to load',
+              'This usually means the Document Server cannot download the file URL, or JWT secrets do not match.'
+            );
+          }
+        }, 20000);
       } catch (e) {
         showError('Editor initialisation failed', e.message);
       }
