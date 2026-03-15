@@ -213,8 +213,17 @@ app.get('/', requireLogin, (_req, res) => {
 // Serve static public assets (CSS, JS, etc.)
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Protect file downloads
-app.use('/uploads', requireLogin, express.static(UPLOADS_DIR));
+// Protect file downloads — allow logged-in users OR a valid signed file token
+// (OnlyOffice Document Server fetches files directly and has no session cookie)
+const FILE_TOKEN_SECRET = JWT_SECRET || process.env.SESSION_SECRET || 'file-token-fallback';
+app.use('/uploads', (req, res, next) => {
+  if (req.session?.user) return next();
+  const t = req.query.t;
+  if (t) {
+    try { jwt.verify(t, FILE_TOKEN_SECRET); return next(); } catch {}
+  }
+  res.status(401).send('Unauthorised');
+}, express.static(UPLOADS_DIR));
 
 // ---- Health / reachability check (public) ----
 app.get('/ping', (_req, res) => {
@@ -318,7 +327,9 @@ app.get('/api/editor-config/:id', (req, res) => {
   if (!entry) return res.status(404).json({ error: 'Not found' });
 
   const appBaseUrl = resolveAppUrl(req);
-  const fileUrl = `${appBaseUrl}/uploads/${encodeURIComponent(entry.storedName)}`;
+  // Sign a short-lived token so OnlyOffice can fetch the file without a session
+  const fileToken = jwt.sign({ id: req.params.id }, FILE_TOKEN_SECRET, { expiresIn: '2h' });
+  const fileUrl = `${appBaseUrl}/uploads/${encodeURIComponent(entry.storedName)}?t=${fileToken}`;
   const callbackUrl = `${appBaseUrl}/api/callback/${req.params.id}`;
 
   const config = {
@@ -368,7 +379,8 @@ app.get('/api/debug/:id', (req, res) => {
   if (!entry) return res.status(404).json({ error: 'Not found' });
 
   const appBaseUrl = resolveAppUrl(req);
-  const fileUrl = `${appBaseUrl}/uploads/${encodeURIComponent(entry.storedName)}`;
+  const fileToken = jwt.sign({ id: req.params.id }, FILE_TOKEN_SECRET, { expiresIn: '2h' });
+  const fileUrl = `${appBaseUrl}/uploads/${encodeURIComponent(entry.storedName)}?t=${fileToken}`;
   const callbackUrl = `${appBaseUrl}/api/callback/${req.params.id}`;
   const filePath = path.join(UPLOADS_DIR, entry.storedName);
 
