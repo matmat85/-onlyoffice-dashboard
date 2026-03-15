@@ -101,7 +101,8 @@
 
   <div id="loadingScreen">
     <div class="spinner"></div>
-    <span>Loading editor…</span>
+    <span id="loadingMsg">Fetching config…</span>
+    <div id="loadingSteps" style="margin-top:14px;font-size:11px;color:#4a6a90;text-align:left;line-height:2"></div>
   </div>
 
   <div id="errorScreen">
@@ -114,7 +115,14 @@
   <script>
     let editorReady = false;
 
+    function step(msg, ok = true) {
+      const el = document.getElementById('loadingSteps');
+      if (el) el.innerHTML += `<div>${ok ? '✔' : '…'} ${msg}</div>`;
+      document.getElementById('loadingMsg').textContent = msg;
+    }
+
     function initEditor(config) {
+      step('api.js loaded — starting editor');
       try {
         const withEvents = {
           ...config,
@@ -135,12 +143,14 @@
 
         // eslint-disable-next-line no-undef
         new DocsAPI.DocEditor('editor', withEvents);
+        step('DocsAPI.DocEditor created — waiting for document…');
 
         setTimeout(() => {
           if (!editorReady) {
             showError(
               'Editor is taking too long to load',
-              'This usually means the Document Server cannot download the file URL, or JWT secrets do not match.'
+              'OnlyOffice could not download the file or the JWT secret does not match. ' +
+              'Test the file URL below in a browser on the OnlyOffice server to confirm it is reachable.'
             );
           }
         }, 20000);
@@ -160,6 +170,7 @@
       const fileId = location.pathname.split('/').pop();
       if (!fileId) { showError('No file ID in URL'); return; }
 
+      step('Fetching editor config from dashboard…', false);
       let cfg;
       try {
         const resp = await fetch(`/api/editor-config/${fileId}`);
@@ -172,12 +183,27 @@
 
       document.getElementById('docTitle').textContent = cfg.config.document.title;
       document.title = cfg.config.document.title + ' \u2014 OnlyOffice';
+      const fileUrl = cfg.config.document.url;
+      step(`Config OK — file: ${fileUrl}`);
+
+      // Quick check: can the browser reach the file URL?
+      step(`Testing file reachability…`, false);
+      try {
+        const probe = await fetch(fileUrl, { method: 'HEAD' });
+        step(`File HEAD ${probe.status} — ${probe.ok ? 'reachable ✓' : 'returned error (OnlyOffice may still work)'}`);
+      } catch {
+        step(`File HEAD failed (CORS may block this — OnlyOffice server-side check is what matters)`);
+      }
 
       // Load the OnlyOffice API script
+      step(`Loading api.js from ${cfg.onlyofficeUrl}…`, false);
       const script = document.createElement('script');
       script.src = `${cfg.onlyofficeUrl}/web-apps/apps/api/documents/api.js`;
       script.onload = () => initEditor(cfg.config);
-      script.onerror = () => showError('Could not load OnlyOffice API', `Make sure the Document Server is reachable at: ${cfg.onlyofficeUrl}`);
+      script.onerror = () => showError(
+        'Could not load OnlyOffice API',
+        `Could not reach: ${cfg.onlyofficeUrl}/web-apps/apps/api/documents/api.js — is the Document Server running?`
+      );
       document.head.appendChild(script);
     })();
   </script>
