@@ -23,10 +23,6 @@ const btnCompose       = document.getElementById('btnCompose');
 const composeModal     = document.getElementById('composeModal');
 const emailBadge       = document.getElementById('emailBadge');
 const btnEmailNext     = document.getElementById('btnEmailNext');
-const userPill         = document.getElementById('userPill');
-const userEmailEl      = document.getElementById('userEmail');
-const btnLogout        = document.getElementById('btnLogout');
-const btnGoogleSignIn  = document.getElementById('btnGoogleSignIn');
 
 let emailPanelInitialised = false;
 
@@ -34,18 +30,9 @@ let emailPanelInitialised = false;
 async function checkAuthStatus() {
   try {
     const res = await fetch('/auth/status');
-    const { authenticated, email, name } = await res.json();
+    const { authenticated, email } = await res.json();
     emailState.authenticated = authenticated;
     emailState.userEmail = email || null;
-    const signedIn = !!email;
-    if (signedIn) {
-      userPill.style.display = 'flex';
-      userEmailEl.textContent = name || email;
-      btnGoogleSignIn.style.display = authenticated ? 'none' : '';
-    } else {
-      userPill.style.display = 'none';
-      btnGoogleSignIn.style.display = '';
-    }
   } catch { emailState.authenticated = false; }
 }
 
@@ -240,12 +227,6 @@ document.getElementById('emailSearch')?.addEventListener('input', e => {
 
 document.getElementById('btnEmailRefresh')?.addEventListener('click', () => loadMessages());
 btnEmailNext?.addEventListener('click', () => loadMessages(true));
-
-// ── Logout ────────────────────────────────────────────────────
-btnLogout?.addEventListener('click', async () => {
-  await fetch('/auth/logout', { method: 'POST' });
-  location.href = '/login';
-});
 
 // ── Unread badge polling (every 60s) ─────────────────────────
 async function updateUnreadBadge() {

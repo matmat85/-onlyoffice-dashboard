@@ -20,6 +20,10 @@ const newDocModal = document.getElementById('newDocModal');
 const newDocName = document.getElementById('newDocName');
 const folderBreadcrumb = document.getElementById('folderBreadcrumb');
 const btnNewFolder = document.getElementById('btnNewFolder');
+const userPill = document.getElementById('userPill');
+const userEmailEl = document.getElementById('userEmail');
+const btnGoogleSignIn = document.getElementById('btnGoogleSignIn');
+const btnLogout = document.getElementById('btnLogout');
 const navBtns = document.querySelectorAll('.sidebar-nav .nav-btn');
 const fileActions = document.getElementById('fileActions');
 const homePanel = document.getElementById('homePanel');
@@ -82,6 +86,25 @@ function showProgressToast(msg) {
 function updateProgress(pct) {
   const bar = document.getElementById('progressBar');
   if (bar) bar.style.width = pct + '%';
+}
+
+async function syncHeaderAuthState() {
+  try {
+    const res = await fetch('/auth/status');
+    const data = await res.json();
+    if (!data.authenticated) {
+      userPill.style.display = 'none';
+      btnGoogleSignIn.style.display = '';
+      return;
+    }
+
+    userPill.style.display = 'flex';
+    userEmailEl.textContent = data.name || data.email || 'Signed in';
+    btnGoogleSignIn.style.display = data.provider === 'google' ? 'none' : '';
+  } catch {
+    userPill.style.display = 'none';
+    btnGoogleSignIn.style.display = '';
+  }
 }
 
 function renderBreadcrumb() {
@@ -358,6 +381,11 @@ window.addEventListener('hashchange', () => {
 
 btnNewFolder.addEventListener('click', createFolder);
 
+btnLogout?.addEventListener('click', async () => {
+  await fetch('/auth/logout', { method: 'POST' });
+  location.href = '/login';
+});
+
 folderBreadcrumb.addEventListener('click', (event) => {
   const jump = event.target.closest('[data-folder-jump]');
   if (!jump) return;
@@ -476,4 +504,5 @@ document.addEventListener('drop', (event) => {
 if (!location.hash || !ROUTES.has(getRouteFromHash())) {
   location.hash = '#/home';
 }
+syncHeaderAuthState();
 applyRoute(getRouteFromHash());
