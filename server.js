@@ -4,6 +4,10 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
+const session = require('express-session');
+const FileStore = require('session-file-store')(session);
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 
 // ---------------------------------------------------------------------------
 // Config
@@ -106,7 +110,6 @@ const ALLOWED_EXTENSIONS = new Set(Object.keys(EXT_MAP));
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
   filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname).replace('.', '').toLowerCase();
     const safeName = file.originalname
       .replace(/[^a-zA-Z0-9._-]/g, '_')
       .substring(0, 200);
@@ -131,14 +134,122 @@ const upload = multer({
 // Express app
 // ---------------------------------------------------------------------------
 const app = express();
-app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
-app.use('/uploads', express.static(UPLOADS_DIR));
 
-// ---- Health / reachability check (test with: curl http://192.168.1.100:3000/ping) ----
+// ---------------------------------------------------------------------------
+// Security headers (helmet) — must come before routes
+// ---------------------------------------------------------------------------
+app.use(helmet({
+  // Allow OnlyOffice iframe and inline scripts needed by the editor
+  contentSecurityPolicy: false,
+}));
+
+// ---------------------------------------------------------------------------
+// Rate limiting — protect auth and API endpoints
+// ---------------------------------------------------------------------------
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later.' },
+});
+app.use('/auth/', authLimiter);
+
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later.' },
+});
+app.use('/api/', apiLimiter);
+
+app.use(express.json());
+
+// ---------------------------------------------------------------------------
+// Session middleware
+// ---------------------------------------------------------------------------
+const SESSION_DIR = path.join(__dirname, 'data', 'sessions');
+if (!fs.existsSync(SESSION_DIR)) fs.mkdirSync(SESSION_DIR, { recursive: true });
+
+app.use(session({
+  store: new FileStore({ path: SESSION_DIR, ttl: 7 * 24 * 3600, retries: 1 }),
+  secret: process.env.SESSION_SECRET || 'officeui-change-me-in-production',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { httpOnly: true, sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 * 1000 },
+}));
+
+// ---------------------------------------------------------------------------
+// Auth helpers
+// ---------------------------------------------------------------------------
+/** Redirects to /login for page requests; 401 JSON for API requests. */
+function requireLogin(req, res, next) {
+  if (req.session?.user) return next();
+  if (req.path.startsWith('/api/') || req.xhr) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+  res.redirect('/login');
+}
+
+// Google OAuth2 + Gmail routes (public — handles /auth/google*)
+app.use(require('./routes/google'));
+
+// Gate the dashboard index — must come before express.static picks it up
+app.get('/', requireLogin, (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Serve static public assets (CSS, JS, login.html, etc.)
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Protect file downloads
+app.use('/uploads', requireLogin, express.static(UPLOADS_DIR));
+
+// ---- Health / reachability check (public) ----
 app.get('/ping', (_req, res) => {
   res.json({ ok: true, time: new Date().toISOString(), onlyofficeUrl: ONLYOFFICE_URL, appUrl: APP_URL });
 });
+
+// ---- API: OnlyOffice save callback (server-to-server — exempt from session auth) ----
+// OnlyOffice Document Server calls this with no user session; verify via JWT if configured.
+app.post('/api/callback/:id', (req, res) => {
+  // If JWT is enabled, verify the Authorization header sent by OnlyOffice
+  if (JWT_SECRET) {
+    const authHeader = req.headers['authorization'] || '';
+    const token = authHeader.replace(/^Bearer\s+/i, '');
+    if (!token) return res.status(401).json({ error: 1 });
+    try { jwt.verify(token, JWT_SECRET); } catch { return res.status(401).json({ error: 1 }); }
+  }
+
+  const { status, url } = req.body;
+  console.log(`[callback] id=${req.params.id} status=${status} hasUrl=${!!url}`);
+
+  if ((status === 2 || status === 6) && url) {
+    const meta = loadMeta();
+    const entry = meta[req.params.id];
+    if (entry) {
+      const httpLib = url.startsWith('https') ? require('https') : require('http');
+      const filePath = path.join(UPLOADS_DIR, entry.storedName);
+      httpLib.get(url, (stream) => {
+        if (stream.statusCode && stream.statusCode >= 400) {
+          console.error(`[callback] failed download for ${req.params.id} - HTTP ${stream.statusCode}`);
+          stream.resume(); return;
+        }
+        const writeStream = fs.createWriteStream(filePath);
+        stream.pipe(writeStream);
+        writeStream.on('finish', () => writeStream.close());
+        writeStream.on('error', (err) => console.error(`[callback] write error:`, err.message));
+      }).on('error', (err) => console.error(`[callback] download error:`, err.message));
+    } else {
+      console.warn(`[callback] metadata missing for id=${req.params.id}`);
+    }
+  }
+  res.json({ error: 0 });
+});
+
+// ---- Protect all remaining /api/* routes ----
+app.use('/api', requireLogin);
 
 // ---- API: list files ----
 app.get('/api/files', (_req, res) => {
@@ -240,51 +351,6 @@ app.get('/api/editor-config/:id', (req, res) => {
   });
 });
 
-// ---- API: OnlyOffice save callback ----
-app.post('/api/callback/:id', (req, res) => {
-  const { status, url } = req.body;
-
-  console.log(`[callback] id=${req.params.id} status=${status} hasUrl=${!!url}`);
-
-  // Status 2 = document ready for saving, 6 = force-save
-  if ((status === 2 || status === 6) && url) {
-    const meta = loadMeta();
-    const entry = meta[req.params.id];
-    if (entry) {
-      const proto = url.startsWith('https') ? require('https') : require('http');
-      const filePath = path.join(UPLOADS_DIR, entry.storedName);
-
-      // rejectUnauthorized: false — OnlyOffice may use a self-signed cert on the LAN
-      const opts = new URL(url);
-      const reqOpts = {
-        hostname: opts.hostname,
-        port: opts.port,
-        path: opts.pathname + opts.search,
-        rejectUnauthorized: false,
-      };
-
-      proto.get(reqOpts, (stream) => {
-        if (stream.statusCode && stream.statusCode >= 400) {
-          console.error(`[callback] failed download for ${req.params.id} - HTTP ${stream.statusCode}`);
-          stream.resume();
-          return;
-        }
-        const writeStream = fs.createWriteStream(filePath);
-        stream.pipe(writeStream);
-        writeStream.on('finish', () => writeStream.close());
-        writeStream.on('error', (err) => console.error(`[callback] write error for ${req.params.id}:`, err.message));
-      }).on('error', (err) => {
-        console.error(`[callback] download error for ${req.params.id}:`, err.message);
-      });
-    } else {
-      console.warn(`[callback] metadata missing for id=${req.params.id}`);
-    }
-  }
-
-  // OnlyOffice expects { "error": 0 }
-  res.json({ error: 0 });
-});
-
 // ---- API: debug a file integration ----
 app.get('/api/debug/:id', (req, res) => {
   const meta = loadMeta();
@@ -361,12 +427,26 @@ app.patch('/api/files/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// ---- Serve editor page ----
-app.get('/editor/:id', (_req, res) => {
+// ---- Serve editor page (protected) ----
+app.get('/editor/:id', requireLogin, (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'editor.html'));
 });
 
+// ---- Global error handler ----
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, _next) => {
+  console.error('[error]', err.message);
+  const status = err.status || err.statusCode || 500;
+  if (req.path.startsWith('/api/') || req.xhr) {
+    return res.status(status).json({ error: err.message || 'Internal server error' });
+  }
+  res.status(status).send('Server error — please go back and try again.');
+});
+
 // ---- Start ----
+if (!process.env.SESSION_SECRET) {
+  console.warn('⚠️  WARNING: SESSION_SECRET is not set. Using an insecure default. Set SESSION_SECRET in your environment before deploying.');
+}
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`OnlyOffice Dashboard running on http://0.0.0.0:${PORT}`);
   console.log(`OnlyOffice URL: ${ONLYOFFICE_URL}`);

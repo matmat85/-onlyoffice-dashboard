@@ -18,6 +18,18 @@
         </svg>
         <span>OnlyOffice Dashboard</span>
       </div>
+      <!-- App nav -->
+      <nav class="app-nav">
+        <button class="nav-btn active" data-view="files">
+          <svg viewBox="0 0 20 20" fill="currentColor"><path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"/></svg>
+          Files
+        </button>
+        <button class="nav-btn" data-view="email">
+          <svg viewBox="0 0 20 20" fill="currentColor"><path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z"/><path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z"/></svg>
+          Email
+          <span class="nav-badge hidden" id="emailBadge"></span>
+        </button>
+      </nav>
       <div class="header-actions">
         <button class="btn btn-primary" id="btnUpload">
           <svg viewBox="0 0 20 20" fill="currentColor"><path d="M10 2a1 1 0 01.707.293l4 4a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L6.707 7.707A1 1 0 015.293 6.293l4-4A1 1 0 0110 2z"/><path d="M3 15a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z"/></svg>
@@ -27,6 +39,14 @@
           <svg viewBox="0 0 20 20" fill="currentColor"><path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"/></svg>
           New
         </button>
+        <div class="user-pill" id="userPill" style="display:none">
+          <span id="userEmail"></span>
+          <button class="btn btn-ghost btn-sm" id="btnLogout">Sign out</button>
+        </div>
+        <a class="btn btn-ghost" id="btnGoogleSignIn" href="/auth/google" style="display:none">
+          <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v2H7a1 1 0 100 2h2v2a1 1 0 102 0v-2h2a1 1 0 100-2h-2V7z" clip-rule="evenodd"/></svg>
+          Connect Gmail
+        </a>
       </div>
     </div>
   </header>
@@ -103,6 +123,76 @@
     </div>
   </main>
 
+  <!-- ═══════════════════════════════════════════════════════
+       Email panel  (shown when nav-btn[data-view=email] active)
+       ═══════════════════════════════════════════════════════ -->
+  <div id="emailPanel" class="view-panel hidden">
+    <!-- Not-signed-in state -->
+    <div id="emailSignInPrompt" class="email-signin-prompt hidden">
+      <svg viewBox="0 0 48 48" fill="none" style="width:56px;height:56px">
+        <rect width="48" height="48" rx="12" fill="#1a2236"/>
+        <path d="M8 16l16 11L40 16" stroke="#446995" stroke-width="2.5" stroke-linecap="round"/>
+        <rect x="8" y="14" width="32" height="22" rx="3" stroke="#446995" stroke-width="2.5"/>
+      </svg>
+      <p>Connect your Google Workspace account to see your Gmail inbox here.</p>
+      <a class="btn btn-primary" href="/auth/google">
+        <svg viewBox="0 0 20 20" fill="currentColor" style="width:16px;height:16px"><path d="M10 2a8 8 0 100 16A8 8 0 0010 2z"/></svg>
+        Sign in with Google
+      </a>
+    </div>
+
+    <!-- Main email layout -->
+    <div id="emailLayout" class="email-layout hidden">
+      <!-- Sidebar: label list -->
+      <aside class="email-sidebar">
+        <button class="btn btn-primary btn-compose" id="btnCompose">✏ Compose</button>
+        <ul class="label-list" id="labelList"></ul>
+      </aside>
+
+      <!-- Message list -->
+      <section class="email-list-pane" id="emailListPane">
+        <div class="email-list-toolbar">
+          <input type="text" id="emailSearch" placeholder="Search mail…" />
+          <button class="btn btn-ghost btn-sm" id="btnEmailRefresh">↻</button>
+        </div>
+        <ul class="email-list" id="emailList">
+          <li class="email-loading">Loading…</li>
+        </ul>
+        <div class="email-list-footer">
+          <button class="btn btn-ghost btn-sm hidden" id="btnEmailNext">Load more</button>
+        </div>
+      </section>
+
+      <!-- Message reader -->
+      <section class="email-reader" id="emailReader">
+        <div class="email-reader-placeholder">
+          <svg viewBox="0 0 24 24" fill="none" style="width:48px;height:48px;opacity:.3">
+            <path d="M3 8l9 6 9-6M3 8v10a1 1 0 001 1h16a1 1 0 001-1V8M3 8a1 1 0 011-1h16a1 1 0 011 1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          <p>Select a message to read</p>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Compose modal -->
+  <div class="modal-overlay hidden" id="composeModal">
+    <div class="modal modal-wide">
+      <h2>New Message</h2>
+      <div class="form-row"><label>To</label><input type="email" id="composeTo" placeholder="recipient@example.com" /></div>
+      <div class="form-row"><label>Subject</label><input type="text" id="composeSubject" placeholder="Subject" /></div>
+      <div class="form-row">
+        <label>Message</label>
+        <textarea id="composeBody" rows="10" placeholder="Write your message…" style="resize:vertical"></textarea>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="btnCancelCompose">Cancel</button>
+        <button class="btn btn-primary" id="btnSendEmail">Send</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/app.js"></script>
+  <script src="/email.js"></script>
 </body>
 </html>

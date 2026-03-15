@@ -118,23 +118,51 @@ function buildDocx() {
 <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
 <Default Extension="xml" ContentType="application/xml"/>
 <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>
 </Types>`);
 
   const rootRels = xml(`<Relationships xmlns="${NS_REL}">
 <Relationship Id="rId1" Type="${NS_OPC}/officeDocument" Target="word/document.xml"/>
 </Relationships>`);
 
-  const docBody = xml(`<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-<w:body><w:p/><w:sectPr/></w:body>
+  const docBody = xml(`<w:document xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas" xmlns:mo="http://schemas.microsoft.com/office/mac/office/2008/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:mv="urn:schemas-microsoft-com:mac:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:w10="urn:schemas-microsoft-com:office:word" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup" xmlns:wpi="http://schemas.microsoft.com/office/word/2010/wordprocessingInk" xmlns:wne="http://schemas.microsoft.com/office/word/2006/wordml" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" mc:Ignorable="w14 wp14">
+<w:body>
+<w:p><w:pPr><w:pStyle w:val="Normal"/></w:pPr></w:p>
+<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr>
+</w:body>
 </w:document>`);
 
-  const docRels = xml(`<Relationships xmlns="${NS_REL}"/>`);
+  const docRels = xml(`<Relationships xmlns="${NS_REL}">
+<Relationship Id="rId1" Type="${NS_OPC}/styles" Target="styles.xml"/>
+<Relationship Id="rId2" Type="${NS_OPC}/settings" Target="settings.xml"/>
+</Relationships>`);
+
+  const styles = xml(`<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<w:docDefaults>
+<w:rPrDefault><w:rPr>
+<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/>
+<w:sz w:val="22"/><w:szCs w:val="22"/>
+</w:rPr></w:rPrDefault>
+</w:docDefaults>
+<w:style w:type="paragraph" w:default="1" w:styleId="Normal">
+<w:name w:val="Normal"/>
+<w:pPr><w:spacing w:after="160" w:line="259" w:lineRule="auto"/></w:pPr>
+</w:style>
+</w:styles>`);
+
+  const settings = xml(`<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:defaultTabStop w:val="720"/>
+<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>
+</w:settings>`);
 
   return buildZip([
-    { name: '[Content_Types].xml',       data: contentTypes },
-    { name: '_rels/.rels',               data: rootRels },
-    { name: 'word/document.xml',         data: docBody },
-    { name: 'word/_rels/document.xml.rels', data: docRels },
+    { name: '[Content_Types].xml',            data: contentTypes },
+    { name: '_rels/.rels',                    data: rootRels },
+    { name: 'word/document.xml',              data: docBody },
+    { name: 'word/_rels/document.xml.rels',   data: docRels },
+    { name: 'word/styles.xml',                data: styles },
+    { name: 'word/settings.xml',              data: settings },
   ]);
 }
 
@@ -147,6 +175,8 @@ function buildXlsx() {
 <Default Extension="xml" ContentType="application/xml"/>
 <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
 <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>
 </Types>`);
 
   const rootRels = xml(`<Relationships xmlns="${NS_REL}">
@@ -154,14 +184,35 @@ function buildXlsx() {
 </Relationships>`);
 
   const workbook = xml(`<workbook xmlns="${NS_SS}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<fileVersion appName="xl" lastEdited="5" lowestEdited="5"/>
+<workbookPr defaultThemeVersion="124226"/>
+<bookViews><workbookView xWindow="0" yWindow="0" windowWidth="18140" windowHeight="8820"/></bookViews>
 <sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets>
+<calcPr calcId="145621"/>
 </workbook>`);
 
   const wbRels = xml(`<Relationships xmlns="${NS_REL}">
 <Relationship Id="rId1" Type="${NS_OPC}/worksheet" Target="worksheets/sheet1.xml"/>
+<Relationship Id="rId2" Type="${NS_OPC}/styles" Target="styles.xml"/>
+<Relationship Id="rId3" Type="${NS_OPC}/sharedStrings" Target="sharedStrings.xml"/>
 </Relationships>`);
 
-  const sheet = xml(`<worksheet xmlns="${NS_SS}"><sheetData/></worksheet>`);
+  const sheet = xml(`<worksheet xmlns="${NS_SS}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<sheetViews><sheetView tabSelected="1" workbookViewId="0"/></sheetViews>
+<sheetFormatPr defaultRowHeight="15"/>
+<sheetData/>
+<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>
+</worksheet>`);
+
+  const styles = xml(`<styleSheet xmlns="${NS_SS}">
+<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>
+<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>
+<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>
+</styleSheet>`);
+
+  const sharedStrings = xml(`<sst xmlns="${NS_SS}" count="0" uniqueCount="0"/>`);
 
   return buildZip([
     { name: '[Content_Types].xml',          data: contentTypes },
@@ -169,6 +220,8 @@ function buildXlsx() {
     { name: 'xl/workbook.xml',              data: workbook },
     { name: 'xl/_rels/workbook.xml.rels',   data: wbRels },
     { name: 'xl/worksheets/sheet1.xml',     data: sheet },
+    { name: 'xl/styles.xml',                data: styles },
+    { name: 'xl/sharedStrings.xml',         data: sharedStrings },
   ]);
 }
 
