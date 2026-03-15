@@ -5,21 +5,36 @@
 
 // ── State ──────────────────────────────────────────────────
 let allFiles = [];
+let allFolders = [];
+let folderPath = [];
 let activeFilter = 'all';
 let searchQuery = '';
+let currentFolderId = 'root';
 
 // ── DOM refs ───────────────────────────────────────────────
-const fileGrid     = document.getElementById('fileGrid');
-const emptyState   = document.getElementById('emptyState');
-const fileInput    = document.getElementById('fileInput');
-const toast        = document.getElementById('toast');
-const newDocModal  = document.getElementById('newDocModal');
-const newDocName   = document.getElementById('newDocName');
+const fileGrid = document.getElementById('fileGrid');
+const emptyState = document.getElementById('emptyState');
+const fileInput = document.getElementById('fileInput');
+const toast = document.getElementById('toast');
+const newDocModal = document.getElementById('newDocModal');
+const newDocName = document.getElementById('newDocName');
+const folderBreadcrumb = document.getElementById('folderBreadcrumb');
+const btnNewFolder = document.getElementById('btnNewFolder');
+const navBtns = document.querySelectorAll('.sidebar-nav .nav-btn');
+const fileActions = document.getElementById('fileActions');
+const homePanel = document.getElementById('homePanel');
+const filesPanel = document.getElementById('filesPanel');
+const emailPanel = document.getElementById('emailPanel');
+const tasksPanel = document.getElementById('tasksPanel');
+const calendarPanel = document.getElementById('calendarPanel');
+
+const ROUTES = new Set(['home', 'files', 'email', 'tasks', 'calendar']);
+let filesLoaded = false;
 
 // ── Icons ──────────────────────────────────────────────────
 const TYPE_ICON = {
-  word:  '📄',
-  cell:  '📊',
+  word: '📄',
+  cell: '📊',
   slide: '📑',
   other: '📁',
 };
@@ -38,6 +53,14 @@ function formatSize(bytes) {
 function formatDate(iso) {
   const d = new Date(iso);
   return d.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function escHtml(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 let toastTimer;
@@ -61,15 +84,34 @@ function updateProgress(pct) {
   if (bar) bar.style.width = pct + '%';
 }
 
+function renderBreadcrumb() {
+  if (!folderPath.length) {
+    folderBreadcrumb.innerHTML = '<span class="crumb current">Root</span>';
+    return;
+  }
+
+  folderBreadcrumb.innerHTML = folderPath.map((item, index) => {
+    const isCurrent = index === folderPath.length - 1;
+    if (isCurrent) {
+      return `<span class="crumb current">${escHtml(item.name)}</span>`;
+    }
+    return `<button class="crumb" data-folder-jump="${item.id}" type="button">${escHtml(item.name)}</button>`;
+  }).join('<span class="crumb-sep">/</span>');
+}
+
 // ── Render ─────────────────────────────────────────────────
 function renderFiles() {
-  const filtered = allFiles.filter(f => {
-    const matchType   = activeFilter === 'all' || f.type === activeFilter;
-    const matchSearch = !searchQuery || f.name.toLowerCase().includes(searchQuery);
+  const filteredFolders = allFolders.filter((folder) => (
+    !searchQuery || folder.name.toLowerCase().includes(searchQuery)
+  ));
+
+  const filteredFiles = allFiles.filter((file) => {
+    const matchType = activeFilter === 'all' || file.type === activeFilter;
+    const matchSearch = !searchQuery || file.name.toLowerCase().includes(searchQuery);
     return matchType && matchSearch;
   });
 
-  if (filtered.length === 0) {
+  if (filteredFolders.length === 0 && filteredFiles.length === 0) {
     fileGrid.innerHTML = '';
     emptyState.classList.remove('hidden');
     return;
@@ -77,46 +119,117 @@ function renderFiles() {
 
   emptyState.classList.add('hidden');
 
-  fileGrid.innerHTML = filtered.map(f => {
-    const iconClass = f.type || 'other';
+  const folderCards = filteredFolders.map((folder) => `
+    <div class="file-card folder-card" data-folder-id="${folder.id}">
+      <div class="file-card-thumb folder">📁</div>
+      <div class="file-card-body">
+        <div class="file-card-name" title="${escHtml(folder.name)}">${escHtml(folder.name)}</div>
+        <div class="file-card-meta">Folder</div>
+      </div>
+    </div>`);
+
+  const fileCards = filteredFiles.map((file) => {
+    const iconClass = file.type || 'other';
     const badgeClass = 'badge-' + iconClass;
-    const label = TYPE_LABEL[f.type] || 'FILE';
+    const label = TYPE_LABEL[file.type] || 'FILE';
     return `
-      <div class="file-card" data-id="${f.id}">
+      <div class="file-card" data-id="${file.id}">
         <div class="file-card-thumb ${iconClass}">
-          ${TYPE_ICON[f.type] || TYPE_ICON.other}
+          ${TYPE_ICON[file.type] || TYPE_ICON.other}
         </div>
         <span class="type-badge ${badgeClass}">${label}</span>
         <div class="file-card-body">
-          <div class="file-card-name" title="${escHtml(f.name)}">${escHtml(f.name)}</div>
-          <div class="file-card-meta">${formatSize(f.size)} · ${formatDate(f.uploadedAt)}</div>
+          <div class="file-card-name" title="${escHtml(file.name)}">${escHtml(file.name)}</div>
+          <div class="file-card-meta">${formatSize(file.size)} · ${formatDate(file.uploadedAt)}</div>
         </div>
         <div class="file-card-actions">
-          <button class="btn btn-primary btn-open"   data-id="${f.id}">Open</button>
-          <button class="btn btn-danger  btn-delete" data-id="${f.id}" title="Delete">✕</button>
+          <button class="btn btn-primary btn-open" data-id="${file.id}">Open</button>
+          <button class="btn btn-danger btn-delete" data-id="${file.id}" title="Delete">✕</button>
         </div>
       </div>`;
-  }).join('');
+  });
+
+  fileGrid.innerHTML = [...folderCards, ...fileCards].join('');
 }
 
-function escHtml(str) {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-// ── Load files ─────────────────────────────────────────────
-async function loadFiles() {
+// ── Load files and folders ─────────────────────────────────
+async function loadFiles(folderId = currentFolderId) {
   try {
-    const res = await fetch('/api/files');
-    if (!res.ok) throw new Error('Failed to load files');
-    allFiles = await res.json();
+    const res = await fetch(`/api/folders/${encodeURIComponent(folderId)}/contents`);
+    if (!res.ok) throw new Error('Failed to load folder');
+    const payload = await res.json();
+
+    currentFolderId = payload.folder.id;
+    allFolders = payload.folders || [];
+    allFiles = payload.files || [];
+    folderPath = payload.path || [];
+
+    renderBreadcrumb();
     renderFiles();
   } catch (e) {
-    showToast('Could not load files: ' + e.message, 'error');
+    showToast('Could not load folder: ' + e.message, 'error');
   }
+}
+
+async function createFolder() {
+  const name = prompt('Folder name');
+  if (!name) return;
+
+  try {
+    const res = await fetch('/api/folders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, parentId: currentFolderId }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'Failed to create folder');
+
+    await loadFiles(currentFolderId);
+    showToast('Folder created', 'success');
+  } catch (e) {
+    showToast('Create folder failed: ' + e.message, 'error');
+  }
+}
+
+// ── Hash routing ───────────────────────────────────────────
+function getRouteFromHash() {
+  const hash = (location.hash || '').replace(/^#\/?/, '').trim().toLowerCase();
+  if (!ROUTES.has(hash)) return 'home';
+  return hash;
+}
+
+function goToRoute(route) {
+  const target = ROUTES.has(route) ? route : 'home';
+  if (getRouteFromHash() === target) {
+    applyRoute(target);
+    return;
+  }
+  location.hash = `#/${target}`;
+}
+
+function applyRoute(route) {
+  const current = ROUTES.has(route) ? route : 'home';
+
+  homePanel.classList.toggle('hidden', current !== 'home');
+  filesPanel.classList.toggle('hidden', current !== 'files');
+  emailPanel.classList.toggle('hidden', current !== 'email');
+  tasksPanel.classList.toggle('hidden', current !== 'tasks');
+  calendarPanel.classList.toggle('hidden', current !== 'calendar');
+
+  fileActions.classList.toggle('hidden', current !== 'files');
+
+  navBtns.forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.route === current);
+  });
+
+  if (current === 'files' && !filesLoaded) {
+    filesLoaded = true;
+    loadFiles(currentFolderId);
+  }
+
+  document.dispatchEvent(new CustomEvent('app:route-change', {
+    detail: { route: current },
+  }));
 }
 
 // ── Open file ──────────────────────────────────────────────
@@ -126,15 +239,14 @@ function openFile(id) {
 
 // ── Delete file ────────────────────────────────────────────
 async function deleteFile(id) {
-  const file = allFiles.find(f => f.id === id);
+  const file = allFiles.find((f) => f.id === id);
   if (!file) return;
   if (!confirm(`Delete "${file.name}"? This cannot be undone.`)) return;
 
   try {
     const res = await fetch(`/api/files/${id}`, { method: 'DELETE' });
     if (!res.ok) throw new Error('Delete failed');
-    allFiles = allFiles.filter(f => f.id !== id);
-    renderFiles();
+    await loadFiles(currentFolderId);
     showToast('File deleted', 'success');
   } catch (e) {
     showToast('Delete failed: ' + e.message, 'error');
@@ -147,11 +259,12 @@ async function uploadFile(file) {
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    const fd  = new FormData();
+    const fd = new FormData();
     fd.append('file', file);
+    fd.append('folderId', currentFolderId);
 
-    xhr.upload.addEventListener('progress', e => {
-      if (e.lengthComputable) updateProgress(Math.round((e.loaded / e.total) * 90));
+    xhr.upload.addEventListener('progress', (event) => {
+      if (event.lengthComputable) updateProgress(Math.round((event.loaded / event.total) * 90));
     });
 
     xhr.addEventListener('load', () => {
@@ -188,7 +301,7 @@ async function handleFiles(fileList) {
 
   if (succeeded > 0) {
     showToast(`${succeeded} file${succeeded > 1 ? 's' : ''} uploaded`, 'success');
-    await loadFiles();
+    await loadFiles(currentFolderId);
   }
 }
 
@@ -198,8 +311,8 @@ let selectedDocType = 'docx';
 function openNewDocModal() {
   selectedDocType = 'docx';
   newDocName.value = '';
-  document.querySelectorAll('.doc-type-btn').forEach(b => {
-    b.classList.toggle('selected', b.dataset.type === selectedDocType);
+  document.querySelectorAll('.doc-type-btn').forEach((button) => {
+    button.classList.toggle('selected', button.dataset.type === selectedDocType);
   });
   newDocModal.classList.remove('hidden');
   setTimeout(() => newDocName.focus(), 50);
@@ -211,14 +324,13 @@ function closeNewDocModal() {
 
 async function createNewDocument() {
   const rawName = newDocName.value.trim() || `Untitled.${selectedDocType}`;
-  // Ensure the chosen extension is appended if user didn't type it
   const name = rawName.endsWith(`.${selectedDocType}`) ? rawName : `${rawName}.${selectedDocType}`;
 
   try {
     const res = await fetch('/api/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, type: selectedDocType }),
+      body: JSON.stringify({ name, type: selectedDocType, folderId: currentFolderId }),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -226,7 +338,7 @@ async function createNewDocument() {
     }
     const { id } = await res.json();
     closeNewDocModal();
-    await loadFiles();
+    await loadFiles(currentFolderId);
     openFile(id);
   } catch (e) {
     showToast('Failed to create document: ' + e.message, 'error');
@@ -234,6 +346,24 @@ async function createNewDocument() {
 }
 
 // ── Event wiring ───────────────────────────────────────────
+navBtns.forEach((btn) => {
+  btn.addEventListener('click', () => {
+    goToRoute(btn.dataset.route || 'home');
+  });
+});
+
+window.addEventListener('hashchange', () => {
+  applyRoute(getRouteFromHash());
+});
+
+btnNewFolder.addEventListener('click', createFolder);
+
+folderBreadcrumb.addEventListener('click', (event) => {
+  const jump = event.target.closest('[data-folder-jump]');
+  if (!jump) return;
+  loadFiles(jump.dataset.folderJump);
+});
+
 // Upload button
 document.getElementById('btnUpload').addEventListener('click', () => fileInput.click());
 
@@ -247,17 +377,16 @@ document.getElementById('btnNewDoc').addEventListener('click', openNewDocModal);
 document.getElementById('btnCancelNew').addEventListener('click', closeNewDocModal);
 document.getElementById('btnConfirmNew').addEventListener('click', createNewDocument);
 
-newDocModal.addEventListener('click', e => {
-  if (e.target === newDocModal) closeNewDocModal();
+newDocModal.addEventListener('click', (event) => {
+  if (event.target === newDocModal) closeNewDocModal();
 });
 
 // Doc type selector
-document.querySelectorAll('.doc-type-btn').forEach(btn => {
+document.querySelectorAll('.doc-type-btn').forEach((btn) => {
   btn.addEventListener('click', () => {
     selectedDocType = btn.dataset.type;
-    document.querySelectorAll('.doc-type-btn').forEach(b => b.classList.remove('selected'));
+    document.querySelectorAll('.doc-type-btn').forEach((button) => button.classList.remove('selected'));
     btn.classList.add('selected');
-    // Pre-fill extension in name input if empty or just an extension
     if (!newDocName.value || /^\.(docx|xlsx|pptx)$/.test(newDocName.value)) {
       newDocName.value = '';
     }
@@ -266,15 +395,15 @@ document.querySelectorAll('.doc-type-btn').forEach(btn => {
 });
 
 // Enter key in new doc name
-newDocName.addEventListener('keydown', e => {
-  if (e.key === 'Enter') createNewDocument();
-  if (e.key === 'Escape') closeNewDocModal();
+newDocName.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') createNewDocument();
+  if (event.key === 'Escape') closeNewDocModal();
 });
 
 // Filter tabs
-document.querySelectorAll('.filter-tab').forEach(tab => {
+document.querySelectorAll('.filter-tab').forEach((tab) => {
   tab.addEventListener('click', () => {
-    document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.filter-tab').forEach((item) => item.classList.remove('active'));
     tab.classList.add('active');
     activeFilter = tab.dataset.filter;
     renderFiles();
@@ -282,48 +411,69 @@ document.querySelectorAll('.filter-tab').forEach(tab => {
 });
 
 // Search
-document.getElementById('searchInput').addEventListener('input', e => {
-  searchQuery = e.target.value.toLowerCase().trim();
+document.getElementById('searchInput').addEventListener('input', (event) => {
+  searchQuery = event.target.value.toLowerCase().trim();
   renderFiles();
 });
 
-// File grid – open / delete
-fileGrid.addEventListener('click', e => {
-  const openBtn   = e.target.closest('.btn-open');
-  const deleteBtn = e.target.closest('.btn-delete');
-  const card      = e.target.closest('.file-card');
+// File grid – open / delete / folder enter
+fileGrid.addEventListener('click', (event) => {
+  const openBtn = event.target.closest('.btn-open');
+  const deleteBtn = event.target.closest('.btn-delete');
+  const folderCard = event.target.closest('.folder-card');
+  const card = event.target.closest('.file-card');
 
   if (deleteBtn) {
-    e.stopPropagation();
+    event.stopPropagation();
     deleteFile(deleteBtn.dataset.id);
     return;
   }
+
   if (openBtn) {
-    e.stopPropagation();
+    event.stopPropagation();
     openFile(openBtn.dataset.id);
     return;
   }
-  if (card && !e.target.closest('.file-card-actions')) {
+
+  if (folderCard) {
+    event.stopPropagation();
+    loadFiles(folderCard.dataset.folderId);
+    return;
+  }
+
+  if (card && !event.target.closest('.file-card-actions')) {
     openFile(card.dataset.id);
   }
 });
 
 // Drag & drop on the whole page
 let dragCounter = 0;
-document.addEventListener('dragenter', e => {
-  if (e.dataTransfer.types.includes('Files')) { dragCounter++; document.body.classList.add('drag-over'); }
+document.addEventListener('dragenter', (event) => {
+  if (event.dataTransfer.types.includes('Files')) {
+    dragCounter++;
+    document.body.classList.add('drag-over');
+  }
 });
+
 document.addEventListener('dragleave', () => {
   dragCounter--;
-  if (dragCounter <= 0) { dragCounter = 0; document.body.classList.remove('drag-over'); }
+  if (dragCounter <= 0) {
+    dragCounter = 0;
+    document.body.classList.remove('drag-over');
+  }
 });
-document.addEventListener('dragover', e => e.preventDefault());
-document.addEventListener('drop', e => {
-  e.preventDefault();
+
+document.addEventListener('dragover', (event) => event.preventDefault());
+
+document.addEventListener('drop', (event) => {
+  event.preventDefault();
   dragCounter = 0;
   document.body.classList.remove('drag-over');
-  handleFiles(e.dataTransfer.files);
+  handleFiles(event.dataTransfer.files);
 });
 
 // ── Init ───────────────────────────────────────────────────
-loadFiles();
+if (!location.hash || !ROUTES.has(getRouteFromHash())) {
+  location.hash = '#/home';
+}
+applyRoute(getRouteFromHash());

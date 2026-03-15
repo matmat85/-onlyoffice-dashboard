@@ -28,20 +28,7 @@ const userEmailEl      = document.getElementById('userEmail');
 const btnLogout        = document.getElementById('btnLogout');
 const btnGoogleSignIn  = document.getElementById('btnGoogleSignIn');
 
-// ── Nav / view switching ──────────────────────────────────────
-const filesMain  = document.querySelector('main');
-const navBtns    = document.querySelectorAll('.nav-btn');
-
-navBtns.forEach(btn => {
-  btn.addEventListener('click', () => {
-    navBtns.forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    const view = btn.dataset.view;
-    filesMain.classList.toggle('hidden', view !== 'files');
-    emailPanel.classList.toggle('hidden', view !== 'email');
-    if (view === 'email') initEmailPanel();
-  });
-});
+let emailPanelInitialised = false;
 
 // ── Auth status check ─────────────────────────────────────────
 async function checkAuthStatus() {
@@ -50,10 +37,11 @@ async function checkAuthStatus() {
     const { authenticated, email, name } = await res.json();
     emailState.authenticated = authenticated;
     emailState.userEmail = email || null;
-    if (authenticated) {
+    const signedIn = !!email;
+    if (signedIn) {
       userPill.style.display = 'flex';
       userEmailEl.textContent = name || email;
-      btnGoogleSignIn.style.display = 'none';
+      btnGoogleSignIn.style.display = authenticated ? 'none' : '';
     } else {
       userPill.style.display = 'none';
       btnGoogleSignIn.style.display = '';
@@ -63,6 +51,9 @@ async function checkAuthStatus() {
 
 // ── Init email panel ──────────────────────────────────────────
 async function initEmailPanel() {
+  if (emailPanelInitialised) return;
+  emailPanelInitialised = true;
+
   await checkAuthStatus();
   if (!emailState.authenticated) {
     emailLayout.classList.add('hidden');
@@ -74,6 +65,16 @@ async function initEmailPanel() {
   await loadLabels();
   await loadMessages();
 }
+
+function isEmailRoute() {
+  return (location.hash || '').replace(/^#\/?/, '').trim().toLowerCase() === 'email';
+}
+
+document.addEventListener('app:route-change', (event) => {
+  if (event.detail?.route === 'email') {
+    initEmailPanel();
+  }
+});
 
 // ── Labels (folders) ─────────────────────────────────────────
 const SHOW_LABELS = ['INBOX','SENT','DRAFTS','TRASH','STARRED','SPAM'];
@@ -285,6 +286,9 @@ function formatEmailDate(dateStr) {
   if (emailState.authenticated) {
     updateUnreadBadge();
     setInterval(updateUnreadBadge, 60_000);
+  }
+  if (isEmailRoute()) {
+    initEmailPanel();
   }
 })();
 

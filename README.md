@@ -7,11 +7,13 @@ A self-hosted web dashboard for your OnlyOffice Document Server. Upload, create,
 ## Features
 
 - **File dashboard** — grid view with type badges, size, and date
+- **SQLite-backed metadata** — file records stored in `data/dashboard.db` (auto-migrates legacy `uploads/_meta.json`)
 - **Upload** — click the button *or* drag & drop files onto the page
 - **New document** — create blank `.docx`, `.xlsx`, or `.pptx` files
 - **Open in editor** — full OnlyOffice editor opens in a new tab
 - **Delete files** — remove files from the server
 - **Filter & search** — filter by document type, search by filename
+- **Dual auth options** — Google OAuth and optional local email/password login (bcrypt)
 - **JWT-secured** — signs every editor config with your OnlyOffice JWT secret
 
 ---
@@ -56,6 +58,10 @@ node server.js
 | `APP_URL` | `http://host.docker.internal:3000` | Dashboard URL **as seen by the OnlyOffice container** (for callbacks & file download) |
 | `PORT` | `3000` | Port the dashboard listens on |
 | `JWT_SECRET` | *(pre-filled)* | Must match `services.CoAuthoring.secret.*.string` in your OnlyOffice `local.json` |
+| `LOCAL_ADMIN_EMAIL` | *(empty)* | Optional local admin email (seeded on startup if password is also set) |
+| `LOCAL_ADMIN_PASSWORD` | *(empty)* | Optional local admin password |
+| `LOCAL_ADMIN_NAME` | `Local Admin` | Display name for seeded local admin |
+| `ALLOW_LOCAL_REGISTRATION` | `false` | If `true`, allows `POST /auth/local/register` after first user exists |
 
 > **Important:** `APP_URL` must be reachable from inside the OnlyOffice container. If both containers are on the same Docker network, use the service name (e.g. `http://dashboard:3000`). When running Docker Desktop on Windows/Mac, `host.docker.internal` resolves to the host machine.
 

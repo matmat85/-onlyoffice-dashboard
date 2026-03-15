@@ -112,7 +112,13 @@ router.get('/auth/google/callback', async (req, res) => {
     // Create server-side session
     req.session.regenerate((err) => {
       if (err) { console.error('[google/callback] session regenerate:', err); return res.redirect('/login?error=oauth'); }
-      req.session.user = { email: userInfo.email, name: userInfo.name, picture: userInfo.picture };
+      req.session.user = {
+        id: userInfo.id || userInfo.email,
+        email: userInfo.email,
+        name: userInfo.name,
+        picture: userInfo.picture,
+        provider: 'google',
+      };
       req.session.save((err2) => {
         if (err2) { console.error('[google/callback] session save:', err2); return res.redirect('/login?error=oauth'); }
         res.redirect('/');

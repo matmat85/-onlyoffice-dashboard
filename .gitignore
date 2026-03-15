@@ -3,3 +3,7 @@ uploads/*
 !uploads/.gitkeep
 .env
 *.log
+data/sessions/
+data/*.db
+data/*.db-shm
+data/*.db-wal

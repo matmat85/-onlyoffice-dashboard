@@ -22,6 +22,8 @@
 
 html { font-size: 15px; }
 
+.hidden { display: none !important; }
+
 body {
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
@@ -66,6 +68,7 @@ header {
 .logo svg { width: 32px; height: 32px; flex-shrink: 0; }
 
 .header-actions { display: flex; gap: 8px; }
+.file-actions { display: flex; gap: 8px; }
 
 /* =========================================================
    Buttons
@@ -99,11 +102,51 @@ header {
    Main layout
    ========================================================= */
 main {
-  max-width: 1300px;
   width: 100%;
-  margin: 0 auto;
+  margin: 0;
   padding: 28px 24px 60px;
   flex: 1;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  min-height: calc(100vh - 61px);
+}
+
+.sidebar {
+  border-right: 1px solid var(--border);
+  background: rgba(26, 34, 54, 0.9);
+  padding: 18px 12px;
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  position: sticky;
+  top: 78px;
+}
+
+.content-area {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.coming-soon {
+  padding: 32px 24px;
+  max-width: 680px;
+}
+
+.coming-soon h2 {
+  font-size: 1.35rem;
+  margin-bottom: 8px;
+}
+
+.coming-soon p {
+  color: var(--text-muted);
+  font-size: 0.95rem;
 }
 
 /* =========================================================
@@ -116,6 +159,44 @@ main {
   flex-wrap: wrap;
   gap: 12px;
   margin-bottom: 24px;
+}
+
+.folder-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.crumb {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+  font-size: 0.82rem;
+}
+
+.crumb:hover { color: var(--text); }
+
+.crumb.current {
+  color: var(--text);
+  font-weight: 600;
+  cursor: default;
+}
+
+.crumb-sep {
+  color: #4f6787;
 }
 
 .filter-tabs { display: flex; gap: 4px; }
@@ -215,6 +296,7 @@ main {
 .file-card-thumb.cell  { background: rgba(33,163,102,.15); }
 .file-card-thumb.slide { background: rgba(208,75,36,.15); }
 .file-card-thumb.other { background: rgba(100,116,139,.15); }
+.file-card-thumb.folder { background: rgba(107, 114, 128, .2); }
 
 .file-card-body {
   padding: 10px 12px 12px;
@@ -265,6 +347,11 @@ main {
 .badge-cell  { background: var(--cell);  color: #fff; }
 .badge-slide { background: var(--slide); color: #fff; }
 .badge-other { background: #475569; color: #fff; }
+
+.folder-card .file-card-actions,
+.folder-card .type-badge {
+  display: none;
+}
 
 /* =========================================================
    Empty state
@@ -416,17 +503,14 @@ body.drag-over::after {
 }
 
 /* =========================================================
-   App nav (Files / Email tabs in header)
+   Sidebar navigation
    ========================================================= */
-.app-nav {
-  display: flex;
-  gap: 4px;
-}
 .nav-btn {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 6px;
-  padding: 7px 14px;
+  width: 100%;
+  padding: 9px 12px;
   border: 1px solid transparent;
   border-radius: 7px;
   background: transparent;
@@ -503,7 +587,8 @@ body.drag-over::after {
 .email-layout {
   display: grid;
   grid-template-columns: 200px 340px 1fr;
-  height: calc(100vh - 62px);
+  height: 100%;
+  min-height: calc(100vh - 61px);
   overflow: hidden;
 }
 .email-layout.hidden { display: none; }
@@ -658,14 +743,27 @@ textarea:focus { border-color: var(--accent); }
    ========================================================= */
 /* Tablet (768px) */
 @media (max-width: 1024px) {
+  .app-shell { grid-template-columns: 74px 1fr; }
+  .sidebar-nav .nav-btn .nav-label { display: none; }
   .email-layout { grid-template-columns: 180px 280px 1fr; }
 }
 
 /* Small tablet / large phone */
 @media (max-width: 768px) {
+  .app-shell { grid-template-columns: 1fr; }
+  .sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 8px 10px;
+  }
+  .sidebar-nav {
+    position: static;
+    flex-direction: row;
+    overflow-x: auto;
+  }
+  .sidebar-nav .nav-btn .nav-label { display: inline; }
   .email-layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
   .email-sidebar { display: none; } /* collapsed on small screens */
-  .app-nav .nav-btn span { display: none; } /* icon-only nav */
   .user-pill span { display: none; }
 }
 
@@ -673,6 +771,7 @@ textarea:focus { border-color: var(--accent); }
   .header-inner { padding: 0; }
   .new-doc-types { flex-direction: column; }
   .file-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .folder-toolbar { flex-direction: column; align-items: flex-start; }
   .filter-tabs { flex-wrap: wrap; }
   .search-wrap input { width: 100%; }
   .toolbar { flex-direction: column; align-items: flex-start; }

@@ -44,6 +44,73 @@
     }
     .btn-google:hover { box-shadow: 0 1px 6px rgba(0,0,0,.3); background: #f8f9fa; }
     .btn-google svg { width: 20px; height: 20px; flex-shrink: 0; }
+    .btn-local {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      padding: 12px 24px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--accent);
+      color: #fff;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: filter .15s;
+    }
+    .btn-local:hover { filter: brightness(1.05); }
+    .login-form {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .login-form input {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface2);
+      color: var(--text);
+      padding: 11px 12px;
+      font-size: 0.9rem;
+      outline: none;
+    }
+    .login-form input:focus { border-color: var(--accent); }
+    .login-or {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      width: 100%;
+      text-align: center;
+      margin-top: -2px;
+      margin-bottom: -2px;
+    }
+    .form-toggle {
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-top: -8px;
+    }
+    .form-toggle button {
+      border: 0;
+      background: transparent;
+      color: var(--accent);
+      cursor: pointer;
+      padding: 0;
+      font-size: 0.8rem;
+    }
+    .form-toggle button:hover { text-decoration: underline; }
+    .help-note {
+      width: 100%;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-align: center;
+      line-height: 1.4;
+      margin-top: -2px;
+    }
     .login-error {
       background: rgba(220,53,69,.15);
       border: 1px solid rgba(220,53,69,.4);
@@ -73,9 +140,31 @@
     </div>
 
     <h1 class="login-title">Welcome back</h1>
-    <p class="login-sub">Sign in with your Google Workspace account to continue.</p>
+    <p class="login-sub">Sign in with local credentials or your Google Workspace account.</p>
 
     <div class="login-error hidden" id="loginError"></div>
+
+    <form class="login-form" id="localLoginForm">
+      <input type="email" id="localEmail" placeholder="Email" autocomplete="username" required />
+      <input type="password" id="localPassword" placeholder="Password" autocomplete="current-password" required />
+      <button class="btn-local" id="btnLocalLogin" type="submit">Sign in with Email</button>
+    </form>
+
+    <form class="login-form hidden" id="localRegisterForm">
+      <input type="text" id="registerName" placeholder="Name" autocomplete="name" required />
+      <input type="email" id="registerEmail" placeholder="Email" autocomplete="username" required />
+      <input type="password" id="registerPassword" placeholder="Password (min 8 chars)" autocomplete="new-password" minlength="8" required />
+      <button class="btn-local" id="btnLocalRegister" type="submit">Create Local Account</button>
+    </form>
+
+    <div class="form-toggle">
+      <span id="togglePrompt">Need a local account?</span>
+      <button id="toggleAuthMode" type="button">Create one</button>
+    </div>
+
+    <div class="help-note" id="registerHelp"></div>
+
+    <div class="login-or">or</div>
 
     <a class="btn-google" href="/auth/google">
       <!-- Google "G" logo -->
@@ -97,11 +186,112 @@
     const params = new URLSearchParams(location.search);
     const err = params.get('error');
     const el = document.getElementById('loginError');
+    const loginForm = document.getElementById('localLoginForm');
+    const registerForm = document.getElementById('localRegisterForm');
+    const loginBtn = document.getElementById('btnLocalLogin');
+    const registerBtn = document.getElementById('btnLocalRegister');
+    const toggleBtn = document.getElementById('toggleAuthMode');
+    const togglePrompt = document.getElementById('togglePrompt');
+    const registerHelp = document.getElementById('registerHelp');
+    let authMode = 'login';
     const msgs = {
       unauthorized: 'Your Google account is not authorised to access this dashboard.',
       oauth: 'Google sign-in failed. Please try again.',
     };
     if (err) { el.textContent = msgs[err] || 'Sign-in error. Please try again.'; el.classList.remove('hidden'); }
+
+    function setAuthMode(mode) {
+      authMode = mode;
+      const showRegister = mode === 'register';
+      loginForm.classList.toggle('hidden', showRegister);
+      registerForm.classList.toggle('hidden', !showRegister);
+      togglePrompt.textContent = showRegister ? 'Already have a local account?' : 'Need a local account?';
+      toggleBtn.textContent = showRegister ? 'Sign in' : 'Create one';
+      el.classList.add('hidden');
+    }
+
+    toggleBtn.addEventListener('click', async () => {
+      if (authMode === 'login') {
+        try {
+          const resp = await fetch('/auth/local/register-status');
+          const status = await resp.json();
+          if (!status.allowed) {
+            registerHelp.textContent = 'Local registration is disabled. Set ALLOW_LOCAL_REGISTRATION=true or seed LOCAL_ADMIN_* in .env.';
+            return;
+          }
+          registerHelp.textContent = '';
+        } catch {
+          registerHelp.textContent = 'Could not verify registration status right now.';
+          return;
+        }
+      }
+      setAuthMode(authMode === 'login' ? 'register' : 'login');
+    });
+
+    loginForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      el.classList.add('hidden');
+      loginBtn.disabled = true;
+      loginBtn.textContent = 'Signing in...';
+
+      const email = document.getElementById('localEmail').value.trim();
+      const password = document.getElementById('localPassword').value;
+
+      try {
+        const resp = await fetch('/auth/local/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || 'Sign-in failed.');
+        location.href = '/';
+      } catch (e) {
+        el.textContent = e.message;
+        el.classList.remove('hidden');
+      } finally {
+        loginBtn.disabled = false;
+        loginBtn.textContent = 'Sign in with Email';
+      }
+    });
+
+    registerForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      el.classList.add('hidden');
+      registerHelp.textContent = '';
+      registerBtn.disabled = true;
+      registerBtn.textContent = 'Creating...';
+
+      const name = document.getElementById('registerName').value.trim();
+      const email = document.getElementById('registerEmail').value.trim();
+      const password = document.getElementById('registerPassword').value;
+
+      try {
+        const resp = await fetch('/auth/local/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, email, password }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || 'Registration failed.');
+
+        const loginResp = await fetch('/auth/local/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        });
+        const loginData = await loginResp.json().catch(() => ({}));
+        if (!loginResp.ok) throw new Error(loginData.error || 'Account created but sign-in failed.');
+
+        location.href = '/';
+      } catch (e) {
+        el.textContent = e.message;
+        el.classList.remove('hidden');
+      } finally {
+        registerBtn.disabled = false;
+        registerBtn.textContent = 'Create Local Account';
+      }
+    });
   </script>
 </body>
 </html>
