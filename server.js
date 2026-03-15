@@ -453,6 +453,17 @@ app.post('/auth/logout', (req, res) => {
   });
 });
 
+app.get('/auth/status', (req, res) => {
+  const user = req.session?.user;
+  if (!user) return res.json({ authenticated: false });
+  res.json({
+    authenticated: true,
+    email: user.email,
+    name: user.name,
+    provider: user.provider || 'local',
+  });
+});
+
 // Gate the dashboard index — must come before express.static picks it up
 app.get('/', requireLogin, (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
