@@ -135,6 +135,11 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(UPLOADS_DIR));
 
+// ---- Health / reachability check (test with: curl http://192.168.1.100:3000/ping) ----
+app.get('/ping', (_req, res) => {
+  res.json({ ok: true, time: new Date().toISOString(), onlyofficeUrl: ONLYOFFICE_URL, appUrl: APP_URL });
+});
+
 // ---- API: list files ----
 app.get('/api/files', (_req, res) => {
   const meta = loadMeta();
