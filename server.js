@@ -177,7 +177,7 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'officeui-change-me-in-production',
   resave: false,
   saveUninitialized: false,
-  cookie: { httpOnly: true, sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 * 1000 },
+  cookie: { httpOnly: true, sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 * 1000, secure: process.env.APP_URL?.startsWith('https') },
 }));
 
 // ---------------------------------------------------------------------------
@@ -195,12 +195,18 @@ function requireLogin(req, res, next) {
 // Google OAuth2 + Gmail routes (public — handles /auth/google*)
 app.use(require('./routes/google'));
 
+// Login page (public)
+app.get('/login', (req, res) => {
+  if (req.session?.user) return res.redirect('/');
+  res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
 // Gate the dashboard index — must come before express.static picks it up
 app.get('/', requireLogin, (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Serve static public assets (CSS, JS, login.html, etc.)
+// Serve static public assets (CSS, JS, etc.)
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Protect file downloads
