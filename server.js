@@ -135,6 +135,10 @@ const upload = multer({
 // ---------------------------------------------------------------------------
 const app = express();
 
+// Trust Cloudflare / reverse-proxy forwarded headers (X-Forwarded-Proto, etc.)
+// Required for secure session cookies to work behind a Cloudflare tunnel.
+app.set('trust proxy', 1);
+
 // ---------------------------------------------------------------------------
 // Security headers (helmet) — must come before routes
 // ---------------------------------------------------------------------------

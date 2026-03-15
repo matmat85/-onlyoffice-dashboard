@@ -243,7 +243,7 @@ btnEmailNext?.addEventListener('click', () => loadMessages(true));
 // ── Logout ────────────────────────────────────────────────────
 btnLogout?.addEventListener('click', async () => {
   await fetch('/auth/google/logout', { method: 'POST' });
-  location.reload();
+  location.href = '/login';
 });
 
 // ── Unread badge polling (every 60s) ─────────────────────────

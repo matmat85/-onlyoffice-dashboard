@@ -30,10 +30,12 @@ function saveTokens(tokens) {
 // OAuth2 client factory
 // ---------------------------------------------------------------------------
 function makeOAuth2Client() {
+  const base = (process.env.APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
+  const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${base}/auth/google/callback`;
   return new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/auth/google/callback'
+    redirectUri
   );
 }
 
