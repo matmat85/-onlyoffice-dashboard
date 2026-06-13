@@ -55,7 +55,6 @@ const emailPanel = document.getElementById('emailPanel');
 const tasksPanel = document.getElementById('tasksPanel');
 const calendarPanel = document.getElementById('calendarPanel');
 const adminPanel = document.getElementById('adminPanel');
-const adminNavBtn = document.getElementById('adminNavBtn');
 const spaceTabs = document.querySelectorAll('.space-tab');
 const spaceDescription = document.getElementById('spaceDescription');
 const newDocSpace = document.getElementById('newDocSpace');
@@ -134,12 +133,10 @@ async function syncHeaderAuthState() {
     btnGoogleSignIn.style.display = data.provider === 'google' ? 'none' : '';
     const btnAdmin = document.getElementById('btnAdmin');
     if (btnAdmin) btnAdmin.classList.toggle('hidden', !data.isAdmin);
-    if (adminNavBtn) adminNavBtn.classList.toggle('hidden', !data.isAdmin);
   } catch {
     userPill.style.display = 'none';
     btnGoogleSignIn.style.display = '';
     isCurrentUserAdmin = false;
-    if (adminNavBtn) adminNavBtn.classList.add('hidden');
   }
 }
 
