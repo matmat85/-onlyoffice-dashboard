@@ -195,10 +195,11 @@
         step(`File HEAD failed (CORS may block this — OnlyOffice server-side check is what matters)`);
       }
 
-      // Load the OnlyOffice API script
+      // Load the OnlyOffice API script.
+      // Add a cache-busting query to avoid stale edge-cached redirects.
       step(`Loading api.js from ${cfg.onlyofficeUrl}…`, false);
       const script = document.createElement('script');
-      script.src = `${cfg.onlyofficeUrl}/web-apps/apps/api/documents/api.js`;
+      script.src = `${cfg.onlyofficeUrl}/web-apps/apps/api/documents/api.js?v=${Date.now()}`;
       script.onload = () => initEditor(cfg.config);
       script.onerror = () => showError(
         'Could not load OnlyOffice API',
