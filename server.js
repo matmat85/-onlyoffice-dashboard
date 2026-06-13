@@ -174,17 +174,51 @@ function ensureSpaceColumns() {
 }
 ensureSpaceColumns();
 
-// ALLOWED_EMAILS: comma-separated list of emails that can access the Shared space.
+function parseEmailList(raw) {
+  return String(raw || '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+// ALLOWED_EMAILS: comma-separated list of emails that can access Shared.
 // If unset, all authenticated users can access Shared and Library.
-const ALLOWED_EMAIL_SET = (() => {
-  const raw = (process.env.ALLOWED_EMAILS || '').trim();
-  if (!raw) return null; // null = open to all
-  return new Set(raw.split(',').map((e) => e.trim().toLowerCase()).filter(Boolean));
-})();
+const ALLOWED_EMAILS_LIST = parseEmailList(process.env.ALLOWED_EMAILS);
+const ALLOWED_EMAIL_SET = ALLOWED_EMAILS_LIST.length ? new Set(ALLOWED_EMAILS_LIST) : null;
+
+// ADMIN_EMAILS: comma-separated list of emails that can access admin features.
+const ADMIN_EMAILS_LIST = parseEmailList(process.env.ADMIN_EMAILS);
+const ADMIN_EMAIL_SET = ADMIN_EMAILS_LIST.length ? new Set(ADMIN_EMAILS_LIST) : null;
 
 function isAllowedForShared(email) {
   if (!ALLOWED_EMAIL_SET) return true;
   return ALLOWED_EMAIL_SET.has(String(email || '').toLowerCase());
+}
+
+function isAdminByEmail(email) {
+  if (!ADMIN_EMAIL_SET) return false;
+  return ADMIN_EMAIL_SET.has(String(email || '').toLowerCase());
+}
+
+function isAdminRequest(req) {
+  const email = req.session?.user?.email || '';
+  if (isAdminByEmail(email)) return true;
+
+  // Backward-compatible fallback for existing local admin users
+  // when ADMIN_EMAILS is not configured.
+  if (!ADMIN_EMAIL_SET) {
+    const dbUser = getUserByIdStmt.get(req.session?.user?.id || '');
+    return !!dbUser?.is_admin;
+  }
+
+  return false;
+}
+
+function maskSecret(value) {
+  const str = String(value || '');
+  if (!str) return '';
+  if (str.length <= 4) return '*'.repeat(str.length);
+  return `${'*'.repeat(str.length - 4)}${str.slice(-4)}`;
 }
 
 const LEGACY_META_FILE = path.join(UPLOADS_DIR, '_meta.json');
@@ -496,8 +530,7 @@ function requireLogin(req, res, next) {
 
 /** Returns 403 if the authenticated user is not an admin. */
 function requireAdmin(req, res, next) {
-  const user = getUserByIdStmt.get(req.session?.user?.id || '');
-  if (!user?.is_admin) return res.status(403).json({ error: 'Admin access required' });
+  if (!isAdminRequest(req)) return res.status(403).json({ error: 'Admin access required' });
   next();
 }
 
@@ -521,13 +554,12 @@ app.post('/auth/logout', (req, res) => {
 app.get('/auth/status', (req, res) => {
   const user = req.session?.user;
   if (!user) return res.json({ authenticated: false });
-  const dbUser = getUserByIdStmt.get(user.id);
   res.json({
     authenticated: true,
     email: user.email,
     name: user.name,
     provider: user.provider || 'local',
-    isAdmin: !!dbUser?.is_admin,
+    isAdmin: isAdminRequest(req),
   });
 });
 
@@ -933,6 +965,21 @@ app.patch('/api/files/:id/move', (req, res) => {
 });
 
 // ---- Admin API: users ----
+app.get('/api/admin/config', requireAdmin, (_req, res) => {
+  res.json({
+    appUrl: APP_URL,
+    onlyofficeUrl: ONLYOFFICE_URL,
+    googleClientId: process.env.GOOGLE_CLIENT_ID || '',
+    allowedEmails: ALLOWED_EMAILS_LIST,
+    adminEmails: ADMIN_EMAILS_LIST,
+    secrets: {
+      googleClientSecret: maskSecret(process.env.GOOGLE_CLIENT_SECRET),
+      sessionSecret: maskSecret(process.env.SESSION_SECRET),
+      jwtSecret: maskSecret(process.env.JWT_SECRET),
+    },
+  });
+});
+
 app.get('/api/admin/users', requireAdmin, (_req, res) => {
   res.json(listUsersAdminStmt.all());
 });

@@ -12,6 +12,7 @@ let searchQuery = '';
 let currentFolderId = 'root';
 let currentSpace = 'shared'; // 'private' | 'shared' | 'library'
 let currentUserEmail = '';
+let isCurrentUserAdmin = false;
 
 const SPACE_ROOTS = { private: 'root-private', shared: 'root', library: 'root-library' };
 
@@ -53,12 +54,15 @@ const filesPanel = document.getElementById('filesPanel');
 const emailPanel = document.getElementById('emailPanel');
 const tasksPanel = document.getElementById('tasksPanel');
 const calendarPanel = document.getElementById('calendarPanel');
+const adminPanel = document.getElementById('adminPanel');
+const adminNavBtn = document.getElementById('adminNavBtn');
 const spaceTabs = document.querySelectorAll('.space-tab');
 const spaceDescription = document.getElementById('spaceDescription');
 const newDocSpace = document.getElementById('newDocSpace');
 
-const ROUTES = new Set(['home', 'files', 'email', 'tasks', 'calendar']);
+const ROUTES = new Set(['home', 'files', 'email', 'tasks', 'calendar', 'admin']);
 let filesLoaded = false;
+let adminConfigLoaded = false;
 
 // ── Icons ──────────────────────────────────────────────────
 const TYPE_ICON = {
@@ -126,12 +130,61 @@ async function syncHeaderAuthState() {
     userPill.style.display = 'flex';
     userEmailEl.textContent = data.name || data.email || 'Signed in';
     currentUserEmail = data.email || '';
+    isCurrentUserAdmin = !!data.isAdmin;
     btnGoogleSignIn.style.display = data.provider === 'google' ? 'none' : '';
     const btnAdmin = document.getElementById('btnAdmin');
     if (btnAdmin) btnAdmin.classList.toggle('hidden', !data.isAdmin);
+    if (adminNavBtn) adminNavBtn.classList.toggle('hidden', !data.isAdmin);
   } catch {
     userPill.style.display = 'none';
     btnGoogleSignIn.style.display = '';
+    isCurrentUserAdmin = false;
+    if (adminNavBtn) adminNavBtn.classList.add('hidden');
+  }
+}
+
+function setConfigValue(id, value) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = value || '(not set)';
+}
+
+function renderAdminConfig(data) {
+  const allowed = Array.isArray(data.allowedEmails) && data.allowedEmails.length
+    ? data.allowedEmails.join(', ')
+    : '(open to all authenticated users)';
+  const admins = Array.isArray(data.adminEmails) && data.adminEmails.length
+    ? data.adminEmails.join(', ')
+    : '(none configured)';
+
+  setConfigValue('cfgAppUrl', data.appUrl);
+  setConfigValue('cfgOnlyofficeUrl', data.onlyofficeUrl);
+  setConfigValue('cfgGoogleClientId', data.googleClientId);
+  setConfigValue('cfgAllowedEmails', allowed);
+  setConfigValue('cfgAdminEmails', admins);
+  setConfigValue('cfgGoogleClientSecret', data.secrets?.googleClientSecret || '');
+  setConfigValue('cfgSessionSecret', data.secrets?.sessionSecret || '');
+  setConfigValue('cfgJwtSecret', data.secrets?.jwtSecret || '');
+}
+
+async function loadAdminConfig(force = false) {
+  if (adminConfigLoaded && !force) return;
+
+  const state = document.getElementById('adminConfigState');
+  const grid = document.getElementById('adminConfigGrid');
+  if (state) state.textContent = 'Loading configuration…';
+  if (grid) grid.classList.add('hidden');
+
+  try {
+    const res = await fetch('/api/admin/config');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Failed to load admin configuration');
+    renderAdminConfig(data);
+    adminConfigLoaded = true;
+    if (state) state.textContent = '';
+    if (grid) grid.classList.remove('hidden');
+  } catch (err) {
+    if (state) state.textContent = 'Could not load admin settings: ' + err.message;
   }
 }
 // ── Space switching ────────────────────────────────────────
@@ -291,11 +344,17 @@ function goToRoute(route) {
 function applyRoute(route) {
   const current = ROUTES.has(route) ? route : 'home';
 
+  if (current === 'admin' && !isCurrentUserAdmin) {
+    location.hash = '#/home';
+    return;
+  }
+
   homePanel.classList.toggle('hidden', current !== 'home');
   filesPanel.classList.toggle('hidden', current !== 'files');
   emailPanel.classList.toggle('hidden', current !== 'email');
   tasksPanel.classList.toggle('hidden', current !== 'tasks');
   calendarPanel.classList.toggle('hidden', current !== 'calendar');
+  adminPanel.classList.toggle('hidden', current !== 'admin');
 
   fileActions.classList.toggle('hidden', current !== 'files');
 
@@ -306,6 +365,10 @@ function applyRoute(route) {
   if (current === 'files' && !filesLoaded) {
     filesLoaded = true;
     loadFiles(currentFolderId);
+  }
+
+  if (current === 'admin') {
+    loadAdminConfig();
   }
 
   document.dispatchEvent(new CustomEvent('app:route-change', {
@@ -441,6 +504,10 @@ window.addEventListener('hashchange', () => {
 });
 
 btnNewFolder.addEventListener('click', createFolder);
+
+document.getElementById('btnRefreshAdminConfig')?.addEventListener('click', () => {
+  loadAdminConfig(true);
+});
 
 // Space tabs
 spaceTabs.forEach((btn) => {

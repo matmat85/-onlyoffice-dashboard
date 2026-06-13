@@ -112,6 +112,10 @@
           <svg viewBox="0 0 20 20" fill="currentColor"><path d="M6 2a1 1 0 012 0v1h4V2a1 1 0 112 0v1h1a2 2 0 012 2v2H3V5a2 2 0 012-2h1V2z"/><path d="M3 9h14v6a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/></svg>
           <span class="nav-label">Calendar</span>
         </button>
+        <button class="nav-btn hidden" id="adminNavBtn" data-route="admin" type="button">
+          <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.49 3.17a1 1 0 00-1.98 0l-.1.86a1 1 0 01-.75.86l-.83.2a1 1 0 00-.62 1.53l.5.7a1 1 0 010 1.16l-.5.7a1 1 0 00.62 1.53l.83.2a1 1 0 01.75.86l.1.86a1 1 0 001.98 0l.1-.86a1 1 0 01.75-.86l.83-.2a1 1 0 00.62-1.53l-.5-.7a1 1 0 010-1.16l.5-.7a1 1 0 00-.62-1.53l-.83-.2a1 1 0 01-.75-.86l-.1-.86zM10 12a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd"/></svg>
+          <span class="nav-label">Admin</span>
+        </button>
       </nav>
     </aside>
 
@@ -247,6 +251,48 @@
         <div class="coming-soon">
           <h2>Calendar</h2>
           <p>FullCalendar integration is planned in the next phase.</p>
+        </div>
+      </div>
+
+      <div id="adminPanel" class="view-panel hidden">
+        <div class="admin-settings-wrap">
+          <div class="admin-settings-head">
+            <h2>Admin Settings</h2>
+            <button class="btn btn-ghost btn-sm" id="btnRefreshAdminConfig" type="button">Refresh</button>
+          </div>
+          <p class="admin-settings-sub">
+            Runtime configuration snapshot. Secrets are masked and only visible to users listed in ADMIN_EMAILS.
+          </p>
+
+          <div class="admin-config-state" id="adminConfigState">Loading configuration…</div>
+
+          <div class="admin-config-grid hidden" id="adminConfigGrid">
+            <div class="admin-config-card">
+              <h3>Application</h3>
+              <div class="admin-config-list">
+                <div class="admin-config-row"><span>APP_URL</span><code id="cfgAppUrl"></code></div>
+                <div class="admin-config-row"><span>ONLYOFFICE_URL</span><code id="cfgOnlyofficeUrl"></code></div>
+                <div class="admin-config-row"><span>GOOGLE_CLIENT_ID</span><code id="cfgGoogleClientId"></code></div>
+              </div>
+            </div>
+
+            <div class="admin-config-card">
+              <h3>Access Control</h3>
+              <div class="admin-config-list">
+                <div class="admin-config-row"><span>ALLOWED_EMAILS</span><code id="cfgAllowedEmails"></code></div>
+                <div class="admin-config-row"><span>ADMIN_EMAILS</span><code id="cfgAdminEmails"></code></div>
+              </div>
+            </div>
+
+            <div class="admin-config-card">
+              <h3>Masked Secrets</h3>
+              <div class="admin-config-list">
+                <div class="admin-config-row"><span>GOOGLE_CLIENT_SECRET</span><code id="cfgGoogleClientSecret"></code></div>
+                <div class="admin-config-row"><span>SESSION_SECRET</span><code id="cfgSessionSecret"></code></div>
+                <div class="admin-config-row"><span>JWT_SECRET</span><code id="cfgJwtSecret"></code></div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </section>
