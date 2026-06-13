@@ -145,6 +145,48 @@ function ensureFolderSchema() {
 
 ensureFolderSchema();
 
+function ensureAdminColumn() {
+  const columns = db.prepare('PRAGMA table_info(users)').all();
+  const hasIsAdmin = columns.some((col) => col.name === 'is_admin');
+  if (!hasIsAdmin) {
+    db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0');
+  }
+}
+ensureAdminColumn();
+
+function ensureSpaceColumns() {
+  const fileColumns = db.prepare('PRAGMA table_info(files)').all();
+  if (!fileColumns.some((c) => c.name === 'space'))
+    db.exec("ALTER TABLE files ADD COLUMN space TEXT NOT NULL DEFAULT 'shared'");
+  if (!fileColumns.some((c) => c.name === 'owner_email'))
+    db.exec("ALTER TABLE files ADD COLUMN owner_email TEXT NOT NULL DEFAULT ''");
+
+  const folderColumns = db.prepare('PRAGMA table_info(folders)').all();
+  if (!folderColumns.some((c) => c.name === 'space'))
+    db.exec("ALTER TABLE folders ADD COLUMN space TEXT NOT NULL DEFAULT 'shared'");
+
+  // Ensure the 3 space root folders exist
+  db.prepare("UPDATE folders SET space = 'shared' WHERE id = 'root'").run();
+  db.prepare("INSERT OR IGNORE INTO folders (id, name, parent_id, created_at, space) VALUES ('root-private', 'My Files', NULL, ?, 'private')")
+    .run(new Date().toISOString());
+  db.prepare("INSERT OR IGNORE INTO folders (id, name, parent_id, created_at, space) VALUES ('root-library', 'Business Library', NULL, ?, 'library')")
+    .run(new Date().toISOString());
+}
+ensureSpaceColumns();
+
+// ALLOWED_EMAILS: comma-separated list of emails that can access the Shared space.
+// If unset, all authenticated users can access Shared and Library.
+const ALLOWED_EMAIL_SET = (() => {
+  const raw = (process.env.ALLOWED_EMAILS || '').trim();
+  if (!raw) return null; // null = open to all
+  return new Set(raw.split(',').map((e) => e.trim().toLowerCase()).filter(Boolean));
+})();
+
+function isAllowedForShared(email) {
+  if (!ALLOWED_EMAIL_SET) return true;
+  return ALLOWED_EMAIL_SET.has(String(email || '').toLowerCase());
+}
+
 const LEGACY_META_FILE = path.join(UPLOADS_DIR, '_meta.json');
 function migrateLegacyMetaIfNeeded() {
   const fileCount = db.prepare('SELECT COUNT(*) AS count FROM files').get().count;
@@ -188,6 +230,8 @@ function toApiFile(row) {
     type: row.document_type,
     uploadedAt: row.uploaded_at,
     folderId: row.folder_id,
+    space: row.space || 'shared',
+    ownerEmail: row.owner_email || '',
   };
 }
 
@@ -197,6 +241,7 @@ function toApiFolder(row) {
     name: row.name,
     parentId: row.parent_id,
     createdAt: row.created_at,
+    space: row.space || 'shared',
   };
 }
 
@@ -204,8 +249,8 @@ const getFileByIdStmt = db.prepare('SELECT * FROM files WHERE id = ?');
 const listFilesStmt = db.prepare('SELECT * FROM files ORDER BY uploaded_at DESC');
 const listFilesByFolderStmt = db.prepare('SELECT * FROM files WHERE folder_id = ? ORDER BY uploaded_at DESC');
 const insertFileStmt = db.prepare(`
-  INSERT INTO files (id, original_name, stored_name, size, document_type, file_type, uploaded_at, folder_id)
-  VALUES (@id, @original_name, @stored_name, @size, @document_type, @file_type, @uploaded_at, @folder_id)
+  INSERT INTO files (id, original_name, stored_name, size, document_type, file_type, uploaded_at, folder_id, space, owner_email)
+  VALUES (@id, @original_name, @stored_name, @size, @document_type, @file_type, @uploaded_at, @folder_id, @space, @owner_email)
 `);
 const deleteFileStmt = db.prepare('DELETE FROM files WHERE id = ?');
 const renameFileStmt = db.prepare('UPDATE files SET original_name = ? WHERE id = ?');
@@ -218,8 +263,8 @@ const listFoldersByParentStmt = db.prepare(`
   ORDER BY name COLLATE NOCASE
 `);
 const insertFolderStmt = db.prepare(`
-  INSERT INTO folders (id, name, parent_id, created_at)
-  VALUES (@id, @name, @parent_id, @created_at)
+  INSERT INTO folders (id, name, parent_id, created_at, space)
+  VALUES (@id, @name, @parent_id, @created_at, @space)
 `);
 const renameFolderStmt = db.prepare('UPDATE folders SET name = ? WHERE id = ?');
 const deleteFolderStmt = db.prepare('DELETE FROM folders WHERE id = ?');
@@ -238,11 +283,16 @@ function buildFolderPath(folderId) {
 }
 
 const getUserByEmailStmt = db.prepare('SELECT * FROM users WHERE email = ?');
+const getUserByIdStmt = db.prepare('SELECT id, email, name, is_admin, created_at FROM users WHERE id = ?');
 const countUsersStmt = db.prepare('SELECT COUNT(*) AS count FROM users');
 const insertUserStmt = db.prepare(`
   INSERT INTO users (id, email, name, password_hash, created_at)
   VALUES (@id, @email, @name, @password_hash, @created_at)
 `);
+const listUsersAdminStmt = db.prepare('SELECT id, email, name, is_admin, created_at FROM users ORDER BY created_at ASC');
+const deleteUserStmt = db.prepare('DELETE FROM users WHERE id = ?');
+const setUserAdminStmt = db.prepare('UPDATE users SET is_admin = ? WHERE id = ?');
+const setUserNameStmt = db.prepare('UPDATE users SET name = ? WHERE id = ?');
 
 function normaliseEmail(email) {
   return String(email || '').trim().toLowerCase();
@@ -255,16 +305,24 @@ async function ensureLocalAdminFromEnv() {
   if (!email || !password) return;
 
   const existing = getUserByEmailStmt.get(email);
-  if (existing) return;
+  if (existing) {
+    if (!existing.is_admin) {
+      setUserAdminStmt.run(1, existing.id);
+      console.log(`[auth] Promoted existing user to admin: ${email}`);
+    }
+    return;
+  }
 
   const password_hash = await bcrypt.hash(password, 12);
+  const newId = crypto.randomUUID();
   insertUserStmt.run({
-    id: crypto.randomUUID(),
+    id: newId,
     email,
     name,
     password_hash,
     created_at: new Date().toISOString(),
   });
+  setUserAdminStmt.run(1, newId);
   console.log(`[auth] Seeded local admin user: ${email}`);
 }
 
@@ -436,6 +494,13 @@ function requireLogin(req, res, next) {
   res.redirect('/login');
 }
 
+/** Returns 403 if the authenticated user is not an admin. */
+function requireAdmin(req, res, next) {
+  const user = getUserByIdStmt.get(req.session?.user?.id || '');
+  if (!user?.is_admin) return res.status(403).json({ error: 'Admin access required' });
+  next();
+}
+
 // Google OAuth2 + Gmail routes (public — handles /auth/google*)
 app.use(require('./routes/google'));
 
@@ -456,12 +521,19 @@ app.post('/auth/logout', (req, res) => {
 app.get('/auth/status', (req, res) => {
   const user = req.session?.user;
   if (!user) return res.json({ authenticated: false });
+  const dbUser = getUserByIdStmt.get(user.id);
   res.json({
     authenticated: true,
     email: user.email,
     name: user.name,
     provider: user.provider || 'local',
+    isAdmin: !!dbUser?.is_admin,
   });
+});
+
+// Admin panel (protected — must come before express.static)
+app.get('/admin', requireLogin, requireAdmin, (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
 // Gate the dashboard index — must come before express.static picks it up
@@ -529,11 +601,18 @@ app.post('/api/callback/:id', (req, res) => {
 app.use('/api', requireLogin);
 
 // ---- API: list files ----
-app.get('/api/files', (_req, res) => {
-  const folderId = String(_req.query.folderId || '').trim();
-  const files = folderId
+app.get('/api/files', (req, res) => {
+  const folderId = String(req.query.folderId || '').trim();
+  const userEmail = req.session.user.email;
+  let files = folderId
     ? listFilesByFolderStmt.all(folderId).map(toApiFile)
     : listFilesStmt.all().map(toApiFile);
+  // Enforce space visibility
+  files = files.filter((f) => {
+    if (f.space === 'private') return f.ownerEmail === userEmail;
+    if (f.space === 'shared') return isAllowedForShared(userEmail);
+    return true; // library: all authenticated
+  });
   res.json(files);
 });
 
@@ -542,13 +621,28 @@ app.get('/api/folders/:id/contents', (req, res) => {
   const folder = getFolderByIdStmt.get(folderId);
   if (!folder) return res.status(404).json({ error: 'Folder not found' });
 
+  const space = folder.space || 'shared';
+  const userEmail = req.session.user.email;
+
+  // Shared-space access check
+  if (space === 'shared' && !isAllowedForShared(userEmail)) {
+    return res.status(403).json({ error: 'You are not in the allowed users list.' });
+  }
+
   const folders = listFoldersByParentStmt.all(folderId, folderId).map(toApiFolder);
-  const files = listFilesByFolderStmt.all(folderId).map(toApiFile);
+  let files = listFilesByFolderStmt.all(folderId).map(toApiFile);
+
+  // Private: only show owner's files
+  if (space === 'private') {
+    files = files.filter((f) => f.ownerEmail === userEmail);
+  }
+
   res.json({
     folder: toApiFolder(folder),
     path: buildFolderPath(folderId),
     folders,
     files,
+    space,
   });
 });
 
@@ -568,12 +662,16 @@ app.post('/api/folders', (req, res) => {
   const parent = getFolderByIdStmt.get(parentId);
   if (!parent) return res.status(404).json({ error: 'Parent folder not found' });
 
+  // Folders inherit the space of their parent
+  const space = parent.space || 'shared';
+
   const id = crypto.randomUUID();
   insertFolderStmt.run({
     id,
     name: name.substring(0, 120),
     parent_id: parentId,
     created_at: new Date().toISOString(),
+    space,
   });
   const created = getFolderByIdStmt.get(id);
   res.status(201).json(toApiFolder(created));
@@ -581,7 +679,8 @@ app.post('/api/folders', (req, res) => {
 
 app.patch('/api/folders/:id', (req, res) => {
   const id = req.params.id;
-  if (id === ROOT_FOLDER_ID) return res.status(400).json({ error: 'Root folder cannot be renamed' });
+  const PROTECTED_ROOTS = new Set([ROOT_FOLDER_ID, 'root-private', 'root-library']);
+  if (PROTECTED_ROOTS.has(id)) return res.status(400).json({ error: 'Root folders cannot be renamed' });
 
   const name = String(req.body?.name || '').trim();
   if (!name) return res.status(400).json({ error: 'Folder name is required' });
@@ -595,7 +694,8 @@ app.patch('/api/folders/:id', (req, res) => {
 
 app.delete('/api/folders/:id', (req, res) => {
   const id = req.params.id;
-  if (id === ROOT_FOLDER_ID) return res.status(400).json({ error: 'Root folder cannot be deleted' });
+  const PROTECTED_ROOTS = new Set([ROOT_FOLDER_ID, 'root-private', 'root-library']);
+  if (PROTECTED_ROOTS.has(id)) return res.status(400).json({ error: 'Root folders cannot be deleted' });
 
   const folder = getFolderByIdStmt.get(id);
   if (!folder) return res.status(404).json({ error: 'Folder not found' });
@@ -622,6 +722,8 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
   if (!folder) return res.status(400).json({ error: 'Invalid folder ID' });
 
   const id = crypto.randomUUID();
+  const VALID_SPACES = new Set(['private', 'shared', 'library']);
+  const space = VALID_SPACES.has(req.body?.space) ? req.body.space : (folder.space || 'shared');
   insertFileStmt.run({
     id,
     original_name: req.file.originalname,
@@ -631,6 +733,8 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
     file_type: info.fileType,
     uploaded_at: new Date().toISOString(),
     folder_id: folderId,
+    space,
+    owner_email: req.session.user.email,
   });
 
   res.json({ id, name: req.file.originalname });
@@ -640,6 +744,21 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
 app.delete('/api/files/:id', (req, res) => {
   const entry = getFileByIdStmt.get(req.params.id);
   if (!entry) return res.status(404).json({ error: 'Not found' });
+
+  const userEmail = req.session.user.email;
+  const space = entry.space || 'shared';
+
+  // Private: only owner can delete
+  if (space === 'private' && entry.owner_email !== userEmail) {
+    return res.status(403).json({ error: 'Access denied.' });
+  }
+  // Library: only admin or owner can delete
+  if (space === 'library') {
+    const dbUser = getUserByIdStmt.get(req.session.user.id);
+    if (!dbUser?.is_admin && entry.owner_email !== userEmail) {
+      return res.status(403).json({ error: 'Only admins or the file owner can delete library files.' });
+    }
+  }
 
   const filePath = path.join(UPLOADS_DIR, entry.stored_name);
   if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
@@ -651,6 +770,16 @@ app.delete('/api/files/:id', (req, res) => {
 app.get('/api/editor-config/:id', (req, res) => {
   const entry = getFileByIdStmt.get(req.params.id);
   if (!entry) return res.status(404).json({ error: 'Not found' });
+
+  // Space-based access control
+  const userEmail = req.session.user.email;
+  const space = entry.space || 'shared';
+  if (space === 'private' && entry.owner_email !== userEmail) {
+    return res.status(403).json({ error: 'Access denied.' });
+  }
+  if (space === 'shared' && !isAllowedForShared(userEmail)) {
+    return res.status(403).json({ error: 'You are not in the allowed users list.' });
+  }
 
   const appBaseUrl = resolveAppUrl(req);
   // Sign a short-lived token so OnlyOffice can fetch the file without a session
@@ -760,6 +889,8 @@ app.post('/api/create', (req, res) => {
 
   const stat = fs.statSync(path.join(UPLOADS_DIR, storedName));
   const originalName = name || `Untitled.${type}`;
+  const VALID_SPACES = new Set(['private', 'shared', 'library']);
+  const space = VALID_SPACES.has(req.body?.space) ? req.body.space : (folder.space || 'shared');
   insertFileStmt.run({
     id,
     original_name: originalName,
@@ -769,6 +900,8 @@ app.post('/api/create', (req, res) => {
     file_type: type,
     uploaded_at: new Date().toISOString(),
     folder_id: folderId,
+    space,
+    owner_email: req.session.user.email,
   });
   res.json({ id, name: originalName });
 });
@@ -796,6 +929,76 @@ app.patch('/api/files/:id/move', (req, res) => {
   if (!folder) return res.status(404).json({ error: 'Folder not found' });
 
   moveFileStmt.run(folderId, req.params.id);
+  res.json({ ok: true });
+});
+
+// ---- Admin API: users ----
+app.get('/api/admin/users', requireAdmin, (_req, res) => {
+  res.json(listUsersAdminStmt.all());
+});
+
+app.post('/api/admin/users', requireAdmin, async (req, res) => {
+  const email = normaliseEmail(req.body?.email);
+  const name = String(req.body?.name || '').trim() || email;
+  const password = String(req.body?.password || '');
+  const isAdmin = req.body?.isAdmin ? 1 : 0;
+  if (!email || password.length < 8) {
+    return res.status(400).json({ error: 'Valid email and a password of at least 8 characters are required.' });
+  }
+  if (getUserByEmailStmt.get(email)) {
+    return res.status(409).json({ error: 'An account with this email already exists.' });
+  }
+  const password_hash = await bcrypt.hash(password, 12);
+  const id = crypto.randomUUID();
+  insertUserStmt.run({ id, email, name, password_hash, created_at: new Date().toISOString() });
+  if (isAdmin) setUserAdminStmt.run(1, id);
+  res.status(201).json({ ok: true, id });
+});
+
+app.patch('/api/admin/users/:id', requireAdmin, async (req, res) => {
+  const user = getUserByIdStmt.get(req.params.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  if (req.body?.name !== undefined) {
+    const name = String(req.body.name).trim();
+    if (name) setUserNameStmt.run(name.substring(0, 200), req.params.id);
+  }
+  if (req.body?.isAdmin !== undefined) {
+    if (req.params.id === req.session.user.id && !req.body.isAdmin) {
+      return res.status(400).json({ error: 'Cannot remove your own admin privileges.' });
+    }
+    setUserAdminStmt.run(req.body.isAdmin ? 1 : 0, req.params.id);
+  }
+  if (req.body?.password !== undefined) {
+    const password = String(req.body.password);
+    if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+    const hash = await bcrypt.hash(password, 12);
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, req.params.id);
+  }
+  res.json({ ok: true });
+});
+
+app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
+  if (req.params.id === req.session.user.id) {
+    return res.status(400).json({ error: 'Cannot delete your own account.' });
+  }
+  const user = getUserByIdStmt.get(req.params.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  deleteUserStmt.run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ---- Admin API: files ----
+app.get('/api/admin/files', requireAdmin, (_req, res) => {
+  res.json(listFilesStmt.all().map(toApiFile));
+});
+
+app.delete('/api/admin/files/:id', requireAdmin, (req, res) => {
+  const entry = getFileByIdStmt.get(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'Not found' });
+  const filePath = path.join(UPLOADS_DIR, entry.stored_name);
+  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  deleteFileStmt.run(req.params.id);
   res.json({ ok: true });
 });
 

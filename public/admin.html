@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin — OnlyOffice Dashboard</title>
+  <link rel="stylesheet" href="/style.css" />
+  <style>
+    .admin-wrap { max-width: 1100px; margin: 0 auto; padding: 32px 24px; }
+    .admin-header { display: flex; align-items: center; gap: 16px; margin-bottom: 28px; }
+    .admin-title { font-size: 1.4rem; font-weight: 700; flex: 1; color: var(--text); }
+    .tab-bar { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 24px; }
+    .tab-btn { padding: 10px 20px; background: transparent; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px; color: var(--text-muted); cursor: pointer; font-size: 0.9rem; transition: color .15s, border-color .15s; }
+    .tab-btn.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; margin-bottom: 20px; }
+    .card-title { font-size: 0.95rem; font-weight: 600; margin-bottom: 16px; color: var(--text); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    th { text-align: left; padding: 8px 12px; color: var(--text-muted); font-weight: 500; font-size: 0.78rem; text-transform: uppercase; letter-spacing: .04em; border-bottom: 1px solid var(--border); }
+    td { padding: 10px 12px; border-bottom: 1px solid rgba(42,58,85,.5); vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(32,44,66,.6); }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+    .badge-admin { background: rgba(68,105,149,.3); color: #7ab4e8; border: 1px solid rgba(68,105,149,.4); }
+    .badge-user { background: rgba(42,58,85,.5); color: var(--text-muted); border: 1px solid var(--border); }
+    .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; align-items: end; }
+    .form-field { display: flex; flex-direction: column; gap: 5px; }
+    .form-field label { font-size: 0.78rem; color: var(--text-muted); font-weight: 500; }
+    .form-field input,
+    .form-field select { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 8px 10px; font-size: 0.875rem; outline: none; width: 100%; }
+    .form-field input:focus,
+    .form-field select:focus { border-color: var(--accent); }
+    .action-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+    .empty-row td { text-align: center; color: var(--text-muted); padding: 32px; }
+    .type-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: middle; }
+    .alert { padding: 10px 16px; border-radius: 8px; font-size: 0.85rem; margin-bottom: 16px; }
+    .alert-error { background: rgba(232,75,75,.15); border: 1px solid rgba(232,75,75,.35); color: #f99; }
+    .alert-success { background: rgba(33,163,102,.15); border: 1px solid rgba(33,163,102,.35); color: #6ee9b0; }
+    .alert.hidden { display: none !important; }
+    .btn-danger { color: var(--danger) !important; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <div class="logo">
+        <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect width="32" height="32" rx="8" fill="#446995"/>
+          <rect x="7" y="10" width="18" height="3" rx="1.5" fill="#fff"/>
+          <rect x="7" y="15" width="13" height="3" rx="1.5" fill="#fff"/>
+          <rect x="7" y="20" width="9" height="3" rx="1.5" fill="#fff"/>
+        </svg>
+        <span>OnlyOffice Dashboard</span>
+      </div>
+      <div class="header-actions">
+        <a class="btn btn-ghost btn-sm" href="/">← Dashboard</a>
+      </div>
+    </div>
+  </header>
+
+  <div class="admin-wrap">
+    <div class="admin-header">
+      <h1 class="admin-title">Admin Panel</h1>
+    </div>
+
+    <div class="tab-bar">
+      <button class="tab-btn active" data-tab="users" type="button">Users</button>
+      <button class="tab-btn" data-tab="files" type="button">Files</button>
+    </div>
+
+    <!-- Users tab -->
+    <div class="tab-panel active" id="tabUsers">
+      <div class="card">
+        <div class="card-title">Create User</div>
+        <div id="userFormAlert" class="alert hidden"></div>
+        <div class="form-grid">
+          <div class="form-field">
+            <label for="newUserName">Name</label>
+            <input type="text" id="newUserName" placeholder="Full name" autocomplete="off" />
+          </div>
+          <div class="form-field">
+            <label for="newUserEmail">Email</label>
+            <input type="email" id="newUserEmail" placeholder="user@example.com" autocomplete="off" />
+          </div>
+          <div class="form-field">
+            <label for="newUserPassword">Password</label>
+            <input type="password" id="newUserPassword" placeholder="Min 8 characters" autocomplete="new-password" />
+          </div>
+          <div class="form-field">
+            <label for="newUserRole">Role</label>
+            <select id="newUserRole">
+              <option value="user">User</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+          <div class="form-field" style="justify-content:flex-end;">
+            <button class="btn btn-primary" id="btnCreateUser" type="button">Create User</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">All Users</div>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Created</th>
+              <th>Role</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="usersBody">
+            <tr class="empty-row"><td colspan="5">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Files tab -->
+    <div class="tab-panel" id="tabFiles">
+      <div class="card">
+        <div class="card-title">All Files</div>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Size</th>
+              <th>Uploaded</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="filesBody">
+            <tr class="empty-row"><td colspan="5">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Change password modal -->
+  <div class="modal-overlay hidden" id="pwModal">
+    <div class="modal">
+      <h2>Change Password</h2>
+      <div id="pwModalAlert" class="alert hidden"></div>
+      <div class="form-row">
+        <label for="pwModalInput">New Password</label>
+        <input type="password" id="pwModalInput" placeholder="Min 8 characters" autocomplete="new-password" />
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="btnPwCancel" type="button">Cancel</button>
+        <button class="btn btn-primary" id="btnPwSave" type="button">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    'use strict';
+
+    let currentPwUserId = null;
+
+    function escHtml(str) {
+      return String(str || '')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function formatDate(iso) {
+      return new Date(iso).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+    }
+
+    function formatSize(bytes) {
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / 1048576).toFixed(1) + ' MB';
+    }
+
+    function showAlert(elId, msg, isError) {
+      const el = document.getElementById(elId);
+      el.textContent = msg;
+      el.className = 'alert ' + (isError !== false ? 'alert-error' : 'alert-success');
+    }
+
+    function hideAlert(elId) {
+      document.getElementById(elId).className = 'alert hidden';
+    }
+
+    // ── Tabs ──────────────────────────────────────────────────────────────
+    document.querySelectorAll('.tab-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
+        document.querySelectorAll('.tab-panel').forEach((p) => p.classList.remove('active'));
+        btn.classList.add('active');
+        const panelId = 'tab' + btn.dataset.tab.charAt(0).toUpperCase() + btn.dataset.tab.slice(1);
+        document.getElementById(panelId).classList.add('active');
+        if (btn.dataset.tab === 'files') loadFiles();
+      });
+    });
+
+    // ── Users ─────────────────────────────────────────────────────────────
+    async function loadUsers() {
+      try {
+        const res = await fetch('/api/admin/users');
+        if (!res.ok) throw new Error('Failed to load');
+        renderUsers(await res.json());
+      } catch {
+        document.getElementById('usersBody').innerHTML =
+          '<tr class="empty-row"><td colspan="5">Failed to load users.</td></tr>';
+      }
+    }
+
+    function renderUsers(users) {
+      const tbody = document.getElementById('usersBody');
+      if (!users.length) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No users found.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = users.map((u) => `
+        <tr>
+          <td>${escHtml(u.name)}</td>
+          <td>${escHtml(u.email)}</td>
+          <td>${formatDate(u.created_at)}</td>
+          <td><span class="badge ${u.is_admin ? 'badge-admin' : 'badge-user'}">${u.is_admin ? 'Admin' : 'User'}</span></td>
+          <td>
+            <div class="action-btns">
+              <button class="btn btn-ghost btn-sm" type="button"
+                onclick="toggleAdmin(${JSON.stringify(u.id)}, ${u.is_admin ? 0 : 1})">
+                ${u.is_admin ? 'Demote' : 'Make Admin'}
+              </button>
+              <button class="btn btn-ghost btn-sm" type="button"
+                onclick="openPwModal(${JSON.stringify(u.id)})">
+                Password
+              </button>
+              <button class="btn btn-ghost btn-sm btn-danger" type="button"
+                onclick="deleteUser(${JSON.stringify(u.id)}, ${JSON.stringify(u.email)})">
+                Delete
+              </button>
+            </div>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    async function toggleAdmin(id, newVal) {
+      const res = await fetch(`/api/admin/users/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isAdmin: !!newVal }),
+      });
+      if (res.ok) {
+        loadUsers();
+      } else {
+        const d = await res.json();
+        alert(d.error || 'Failed to update role.');
+      }
+    }
+
+    async function deleteUser(id, email) {
+      if (!confirm(`Delete user "${email}"? This cannot be undone.`)) return;
+      const res = await fetch(`/api/admin/users/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (res.ok) {
+        loadUsers();
+      } else {
+        const d = await res.json();
+        alert(d.error || 'Failed to delete user.');
+      }
+    }
+
+    function openPwModal(id) {
+      currentPwUserId = id;
+      document.getElementById('pwModalInput').value = '';
+      hideAlert('pwModalAlert');
+      document.getElementById('pwModal').classList.remove('hidden');
+    }
+
+    document.getElementById('btnPwCancel').addEventListener('click', () => {
+      document.getElementById('pwModal').classList.add('hidden');
+    });
+
+    document.getElementById('pwModal').addEventListener('click', (e) => {
+      if (e.target === document.getElementById('pwModal')) {
+        document.getElementById('pwModal').classList.add('hidden');
+      }
+    });
+
+    document.getElementById('btnPwSave').addEventListener('click', async () => {
+      const password = document.getElementById('pwModalInput').value;
+      if (password.length < 8) {
+        showAlert('pwModalAlert', 'Password must be at least 8 characters.');
+        return;
+      }
+      const res = await fetch(`/api/admin/users/${encodeURIComponent(currentPwUserId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      if (res.ok) {
+        document.getElementById('pwModal').classList.add('hidden');
+      } else {
+        const d = await res.json();
+        showAlert('pwModalAlert', d.error || 'Failed to update password.');
+      }
+    });
+
+    document.getElementById('btnCreateUser').addEventListener('click', async () => {
+      const email = document.getElementById('newUserEmail').value.trim();
+      const name = document.getElementById('newUserName').value.trim();
+      const password = document.getElementById('newUserPassword').value;
+      const isAdmin = document.getElementById('newUserRole').value === 'admin';
+      hideAlert('userFormAlert');
+
+      if (!email || password.length < 8) {
+        showAlert('userFormAlert', 'Please fill in email and a password of at least 8 characters.');
+        return;
+      }
+
+      const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, name, password, isAdmin }),
+      });
+      const d = await res.json();
+      if (res.ok) {
+        showAlert('userFormAlert', 'User created successfully.', false);
+        document.getElementById('newUserEmail').value = '';
+        document.getElementById('newUserName').value = '';
+        document.getElementById('newUserPassword').value = '';
+        document.getElementById('newUserRole').value = 'user';
+        loadUsers();
+      } else {
+        showAlert('userFormAlert', d.error || 'Failed to create user.');
+      }
+    });
+
+    // ── Files ─────────────────────────────────────────────────────────────
+    let _filesLoaded = false;
+
+    async function loadFiles() {
+      if (_filesLoaded) return;
+      try {
+        const res = await fetch('/api/admin/files');
+        if (!res.ok) throw new Error('Failed to load');
+        _filesLoaded = true;
+        renderAdminFiles(await res.json());
+      } catch {
+        document.getElementById('filesBody').innerHTML =
+          '<tr class="empty-row"><td colspan="5">Failed to load files.</td></tr>';
+      }
+    }
+
+    const TYPE_COLOR = { word: 'var(--word)', cell: 'var(--cell)', slide: 'var(--slide)' };
+    const TYPE_LABEL = { word: 'DOC', cell: 'XLS', slide: 'PPT' };
+
+    function renderAdminFiles(files) {
+      const tbody = document.getElementById('filesBody');
+      if (!files.length) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No files uploaded.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = files.map((f) => `
+        <tr>
+          <td>${escHtml(f.name)}</td>
+          <td>
+            <span class="type-dot" style="background:${TYPE_COLOR[f.type] || 'var(--text-muted)'}"></span>
+            ${TYPE_LABEL[f.type] || escHtml(f.type)}
+          </td>
+          <td>${formatSize(f.size)}</td>
+          <td>${formatDate(f.uploadedAt)}</td>
+          <td>
+            <div class="action-btns">
+              <button class="btn btn-ghost btn-sm btn-danger" type="button"
+                onclick="deleteAdminFile(${JSON.stringify(f.id)}, ${JSON.stringify(f.name)})">
+                Delete
+              </button>
+            </div>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    async function deleteAdminFile(id, name) {
+      if (!confirm(`Delete file "${name}"? This cannot be undone.`)) return;
+      const res = await fetch(`/api/admin/files/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (res.ok) {
+        _filesLoaded = false;
+        loadFiles();
+      } else {
+        const d = await res.json();
+        alert(d.error || 'Failed to delete file.');
+      }
+    }
+
+    // ── Init ──────────────────────────────────────────────────────────────
+    loadUsers();
+  </script>
+</body>
+</html>

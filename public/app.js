@@ -10,6 +10,28 @@ let folderPath = [];
 let activeFilter = 'all';
 let searchQuery = '';
 let currentFolderId = 'root';
+let currentSpace = 'shared'; // 'private' | 'shared' | 'library'
+let currentUserEmail = '';
+
+const SPACE_ROOTS = { private: 'root-private', shared: 'root', library: 'root-library' };
+
+const SPACE_META = {
+  private: {
+    label: 'My Files',
+    desc: 'Private documents only visible to you.',
+    icon: '🔒',
+  },
+  shared: {
+    label: 'Team Shared',
+    desc: 'Files shared with your whole team.',
+    icon: '👥',
+  },
+  library: {
+    label: 'Business Library',
+    desc: 'Curated SOPs, instructions, and permanent company documentation accessible to everyone.',
+    icon: '📚',
+  },
+};
 
 // ── DOM refs ───────────────────────────────────────────────
 const fileGrid = document.getElementById('fileGrid');
@@ -31,6 +53,9 @@ const filesPanel = document.getElementById('filesPanel');
 const emailPanel = document.getElementById('emailPanel');
 const tasksPanel = document.getElementById('tasksPanel');
 const calendarPanel = document.getElementById('calendarPanel');
+const spaceTabs = document.querySelectorAll('.space-tab');
+const spaceDescription = document.getElementById('spaceDescription');
+const newDocSpace = document.getElementById('newDocSpace');
 
 const ROUTES = new Set(['home', 'files', 'email', 'tasks', 'calendar']);
 let filesLoaded = false;
@@ -100,11 +125,36 @@ async function syncHeaderAuthState() {
 
     userPill.style.display = 'flex';
     userEmailEl.textContent = data.name || data.email || 'Signed in';
+    currentUserEmail = data.email || '';
     btnGoogleSignIn.style.display = data.provider === 'google' ? 'none' : '';
+    const btnAdmin = document.getElementById('btnAdmin');
+    if (btnAdmin) btnAdmin.classList.toggle('hidden', !data.isAdmin);
   } catch {
     userPill.style.display = 'none';
     btnGoogleSignIn.style.display = '';
   }
+}
+// ── Space switching ────────────────────────────────────────
+function applySpaceTabs() {
+  spaceTabs.forEach((btn) => btn.classList.toggle('active', btn.dataset.space === currentSpace));
+
+  const meta = SPACE_META[currentSpace];
+  if (spaceDescription) {
+    spaceDescription.innerHTML = `<span class="space-desc-icon">${meta.icon}</span>${meta.desc}`;
+  }
+
+  // Only shared space supports sub-folder navigation
+  const folderToolbar = document.querySelector('.folder-toolbar');
+  if (folderToolbar) folderToolbar.classList.toggle('hidden', currentSpace !== 'shared');
+}
+
+function switchSpace(space) {
+  if (!SPACE_ROOTS[space]) return;
+  currentSpace = space;
+  currentFolderId = SPACE_ROOTS[space];
+  filesLoaded = false;
+  applySpaceTabs();
+  loadFiles(currentFolderId);
 }
 
 function renderBreadcrumb() {
@@ -155,19 +205,27 @@ function renderFiles() {
     const iconClass = file.type || 'other';
     const badgeClass = 'badge-' + iconClass;
     const label = TYPE_LABEL[file.type] || 'FILE';
+    const isOwner = file.ownerEmail === currentUserEmail;
+    const space = file.space || 'shared';
+    const spaceBadgeHtml = space !== 'shared'
+      ? `<span class="space-badge space-badge-${space}">${space === 'private' ? '🔒' : '📚'}</span>`
+      : '';
+    // Show delete only if owner (or for shared: anyone can delete)
+    const canDelete = space === 'shared' || isOwner;
     return `
       <div class="file-card" data-id="${file.id}">
         <div class="file-card-thumb ${iconClass}">
           ${TYPE_ICON[file.type] || TYPE_ICON.other}
         </div>
         <span class="type-badge ${badgeClass}">${label}</span>
+        ${spaceBadgeHtml}
         <div class="file-card-body">
           <div class="file-card-name" title="${escHtml(file.name)}">${escHtml(file.name)}</div>
           <div class="file-card-meta">${formatSize(file.size)} · ${formatDate(file.uploadedAt)}</div>
         </div>
         <div class="file-card-actions">
           <button class="btn btn-primary btn-open" data-id="${file.id}">Open</button>
-          <button class="btn btn-danger btn-delete" data-id="${file.id}" title="Delete">✕</button>
+          ${canDelete ? `<button class="btn btn-danger btn-delete" data-id="${file.id}" title="Delete">✕</button>` : ''}
         </div>
       </div>`;
   });
@@ -285,6 +343,7 @@ async function uploadFile(file) {
     const fd = new FormData();
     fd.append('file', file);
     fd.append('folderId', currentFolderId);
+    fd.append('space', currentSpace);
 
     xhr.upload.addEventListener('progress', (event) => {
       if (event.lengthComputable) updateProgress(Math.round((event.loaded / event.total) * 90));
@@ -334,6 +393,7 @@ let selectedDocType = 'docx';
 function openNewDocModal() {
   selectedDocType = 'docx';
   newDocName.value = '';
+  if (newDocSpace) newDocSpace.value = currentSpace;
   document.querySelectorAll('.doc-type-btn').forEach((button) => {
     button.classList.toggle('selected', button.dataset.type === selectedDocType);
   });
@@ -348,12 +408,13 @@ function closeNewDocModal() {
 async function createNewDocument() {
   const rawName = newDocName.value.trim() || `Untitled.${selectedDocType}`;
   const name = rawName.endsWith(`.${selectedDocType}`) ? rawName : `${rawName}.${selectedDocType}`;
+  const space = newDocSpace ? newDocSpace.value : currentSpace;
 
   try {
     const res = await fetch('/api/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, type: selectedDocType, folderId: currentFolderId }),
+      body: JSON.stringify({ name, type: selectedDocType, folderId: currentFolderId, space }),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -380,6 +441,11 @@ window.addEventListener('hashchange', () => {
 });
 
 btnNewFolder.addEventListener('click', createFolder);
+
+// Space tabs
+spaceTabs.forEach((btn) => {
+  btn.addEventListener('click', () => switchSpace(btn.dataset.space));
+});
 
 btnLogout?.addEventListener('click', async () => {
   await fetch('/auth/logout', { method: 'POST' });
@@ -506,3 +572,4 @@ if (!location.hash || !ROUTES.has(getRouteFromHash())) {
 }
 syncHeaderAuthState();
 applyRoute(getRouteFromHash());
+applySpaceTabs();
