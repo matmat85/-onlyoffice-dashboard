@@ -15,16 +15,57 @@ const rateLimit = require('express-rate-limit');
 // Config
 // ---------------------------------------------------------------------------
 const PORT = parseInt(process.env.PORT, 10) || 3000;
-const ONLYOFFICE_URL = (process.env.ONLYOFFICE_URL || 'http://localhost:8080').replace(/\/+$/, '');
-const APP_URL = (process.env.APP_URL || `http://host.docker.internal:${PORT}`).replace(/\/+$/, '');
-const JWT_SECRET = process.env.JWT_SECRET || '';
 const DATA_DIR = path.join(__dirname, 'data');
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
 const DB_FILE = path.join(DATA_DIR, 'dashboard.db');
 const ROOT_FOLDER_ID = 'root';
+const RUNTIME_CONFIG_FILE = path.join(DATA_DIR, 'runtime-config.json');
 
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+
+function loadRuntimeConfig() {
+  if (!fs.existsSync(RUNTIME_CONFIG_FILE)) return {};
+  try {
+    const parsed = JSON.parse(fs.readFileSync(RUNTIME_CONFIG_FILE, 'utf8'));
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveRuntimeConfig(updates) {
+  const current = loadRuntimeConfig();
+  const next = { ...current, ...updates };
+  fs.writeFileSync(RUNTIME_CONFIG_FILE, JSON.stringify(next, null, 2));
+  return next;
+}
+
+function applyRuntimeConfigToEnv() {
+  const runtime = loadRuntimeConfig();
+  const keys = [
+    'APP_URL',
+    'ONLYOFFICE_URL',
+    'GOOGLE_CLIENT_ID',
+    'GOOGLE_CLIENT_SECRET',
+    'SESSION_SECRET',
+    'JWT_SECRET',
+    'ALLOWED_EMAILS',
+    'ADMIN_EMAILS',
+  ];
+  for (const key of keys) {
+    if (runtime[key] !== undefined && runtime[key] !== null) {
+      process.env[key] = String(runtime[key]);
+    }
+  }
+}
+
+// Apply persisted overrides from the data volume before reading config vars.
+applyRuntimeConfigToEnv();
+
+let ONLYOFFICE_URL = (process.env.ONLYOFFICE_URL || 'http://localhost:8080').replace(/\/+$/, '');
+let APP_URL = (process.env.APP_URL || `http://host.docker.internal:${PORT}`).replace(/\/+$/, '');
+let JWT_SECRET = process.env.JWT_SECRET || '';
 
 // ---------------------------------------------------------------------------
 // Extension → documentType / fileType mappings
@@ -181,14 +222,31 @@ function parseEmailList(raw) {
     .filter(Boolean);
 }
 
+function listToCsv(list) {
+  return (Array.isArray(list) ? list : []).join(',');
+}
+
+function normaliseUrl(raw, fallback) {
+  const value = String(raw || '').trim();
+  return (value || fallback).replace(/\/+$/, '');
+}
+
 // ALLOWED_EMAILS: comma-separated list of emails that can access Shared.
 // If unset, all authenticated users can access Shared and Library.
-const ALLOWED_EMAILS_LIST = parseEmailList(process.env.ALLOWED_EMAILS);
-const ALLOWED_EMAIL_SET = ALLOWED_EMAILS_LIST.length ? new Set(ALLOWED_EMAILS_LIST) : null;
+let ALLOWED_EMAILS_LIST = parseEmailList(process.env.ALLOWED_EMAILS);
+let ALLOWED_EMAIL_SET = ALLOWED_EMAILS_LIST.length ? new Set(ALLOWED_EMAILS_LIST) : null;
 
 // ADMIN_EMAILS: comma-separated list of emails that can access admin features.
-const ADMIN_EMAILS_LIST = parseEmailList(process.env.ADMIN_EMAILS);
-const ADMIN_EMAIL_SET = ADMIN_EMAILS_LIST.length ? new Set(ADMIN_EMAILS_LIST) : null;
+let ADMIN_EMAILS_LIST = parseEmailList(process.env.ADMIN_EMAILS);
+let ADMIN_EMAIL_SET = ADMIN_EMAILS_LIST.length ? new Set(ADMIN_EMAILS_LIST) : null;
+
+function refreshAccessLists() {
+  ALLOWED_EMAILS_LIST = parseEmailList(process.env.ALLOWED_EMAILS);
+  ALLOWED_EMAIL_SET = ALLOWED_EMAILS_LIST.length ? new Set(ALLOWED_EMAILS_LIST) : null;
+
+  ADMIN_EMAILS_LIST = parseEmailList(process.env.ADMIN_EMAILS);
+  ADMIN_EMAIL_SET = ADMIN_EMAILS_LIST.length ? new Set(ADMIN_EMAILS_LIST) : null;
+}
 
 function isAllowedForShared(email) {
   if (!ALLOWED_EMAIL_SET) return true;
@@ -573,7 +631,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Protect file downloads — allow logged-in users OR a valid signed file token
 // (OnlyOffice Document Server fetches files directly and has no session cookie)
-const FILE_TOKEN_SECRET = JWT_SECRET || process.env.SESSION_SECRET || 'file-token-fallback';
+let FILE_TOKEN_SECRET = JWT_SECRET || process.env.SESSION_SECRET || 'file-token-fallback';
 app.use('/uploads', (req, res, next) => {
   if (req.session?.user) return next();
   const t = req.query.t;
@@ -967,6 +1025,79 @@ app.get('/api/admin/config', requireAdmin, (_req, res) => {
     googleClientId: process.env.GOOGLE_CLIENT_ID || '',
     allowedEmails: ALLOWED_EMAILS_LIST,
     adminEmails: ADMIN_EMAILS_LIST,
+    persistedTo: 'data/runtime-config.json',
+    secrets: {
+      googleClientSecret: maskSecret(process.env.GOOGLE_CLIENT_SECRET),
+      sessionSecret: maskSecret(process.env.SESSION_SECRET),
+      jwtSecret: maskSecret(process.env.JWT_SECRET),
+    },
+  });
+});
+
+app.patch('/api/admin/config', requireAdmin, (req, res) => {
+  const updates = {};
+
+  if (req.body?.appUrl !== undefined) {
+    APP_URL = normaliseUrl(req.body.appUrl, APP_URL || `http://host.docker.internal:${PORT}`);
+    process.env.APP_URL = APP_URL;
+    updates.APP_URL = APP_URL;
+  }
+
+  if (req.body?.onlyofficeUrl !== undefined) {
+    ONLYOFFICE_URL = normaliseUrl(req.body.onlyofficeUrl, ONLYOFFICE_URL || 'http://localhost:8080');
+    process.env.ONLYOFFICE_URL = ONLYOFFICE_URL;
+    updates.ONLYOFFICE_URL = ONLYOFFICE_URL;
+  }
+
+  if (req.body?.googleClientId !== undefined) {
+    const googleClientId = String(req.body.googleClientId || '').trim();
+    process.env.GOOGLE_CLIENT_ID = googleClientId;
+    updates.GOOGLE_CLIENT_ID = googleClientId;
+  }
+
+  if (req.body?.allowedEmails !== undefined) {
+    const allowedList = parseEmailList(req.body.allowedEmails);
+    process.env.ALLOWED_EMAILS = listToCsv(allowedList);
+    updates.ALLOWED_EMAILS = process.env.ALLOWED_EMAILS;
+  }
+
+  if (req.body?.adminEmails !== undefined) {
+    const adminList = parseEmailList(req.body.adminEmails);
+    process.env.ADMIN_EMAILS = listToCsv(adminList);
+    updates.ADMIN_EMAILS = process.env.ADMIN_EMAILS;
+  }
+
+  if (req.body?.googleClientSecret !== undefined && String(req.body.googleClientSecret || '').trim()) {
+    const secret = String(req.body.googleClientSecret);
+    process.env.GOOGLE_CLIENT_SECRET = secret;
+    updates.GOOGLE_CLIENT_SECRET = secret;
+  }
+
+  if (req.body?.sessionSecret !== undefined && String(req.body.sessionSecret || '').trim()) {
+    const secret = String(req.body.sessionSecret);
+    process.env.SESSION_SECRET = secret;
+    updates.SESSION_SECRET = secret;
+  }
+
+  if (req.body?.jwtSecret !== undefined && String(req.body.jwtSecret || '').trim()) {
+    const secret = String(req.body.jwtSecret);
+    JWT_SECRET = secret;
+    process.env.JWT_SECRET = secret;
+    updates.JWT_SECRET = secret;
+  }
+
+  saveRuntimeConfig(updates);
+  refreshAccessLists();
+  FILE_TOKEN_SECRET = JWT_SECRET || process.env.SESSION_SECRET || 'file-token-fallback';
+
+  res.json({
+    ok: true,
+    appUrl: APP_URL,
+    onlyofficeUrl: ONLYOFFICE_URL,
+    googleClientId: process.env.GOOGLE_CLIENT_ID || '',
+    allowedEmails: ALLOWED_EMAILS_LIST,
+    adminEmails: ADMIN_EMAILS_LIST,
+    persistedTo: 'data/runtime-config.json',
     secrets: {
       googleClientSecret: maskSecret(process.env.GOOGLE_CLIENT_SECRET),
       sessionSecret: maskSecret(process.env.SESSION_SECRET),
