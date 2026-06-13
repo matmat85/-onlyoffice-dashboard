@@ -204,14 +204,9 @@ function isAdminRequest(req) {
   const email = req.session?.user?.email || '';
   if (isAdminByEmail(email)) return true;
 
-  // Backward-compatible fallback for existing local admin users
-  // when ADMIN_EMAILS is not configured.
-  if (!ADMIN_EMAIL_SET) {
-    const dbUser = getUserByIdStmt.get(req.session?.user?.id || '');
-    return !!dbUser?.is_admin;
-  }
-
-  return false;
+  // Also honour legacy DB admin role so existing admins are not locked out.
+  const dbUser = getUserByIdStmt.get(req.session?.user?.id || '');
+  return !!dbUser?.is_admin;
 }
 
 function maskSecret(value) {
