@@ -13,8 +13,10 @@ let currentFolderId = 'root';
 let currentSpace = 'shared'; // 'private' | 'shared' | 'library'
 let currentUserEmail = '';
 let isCurrentUserAdmin = false;
+let viewingTrash = false;
 
 const SPACE_ROOTS = { private: 'root-private', shared: 'root', library: 'root-library' };
+const TRASH_ROOTS = { private: 'root-private-trash', shared: 'root-trash', library: 'root-library-trash' };
 
 const SPACE_META = {
   private: {
@@ -41,8 +43,15 @@ const fileInput = document.getElementById('fileInput');
 const toast = document.getElementById('toast');
 const newDocModal = document.getElementById('newDocModal');
 const newDocName = document.getElementById('newDocName');
+const fileManageModal = document.getElementById('fileManageModal');
+const fileManageTitle = document.getElementById('fileManageTitle');
+const fileManageName = document.getElementById('fileManageName');
+const fileManageDestination = document.getElementById('fileManageDestination');
+const fileManageDestinationRow = document.getElementById('fileManageDestinationRow');
+const fileManageTrashNote = document.getElementById('fileManageTrashNote');
 const folderBreadcrumb = document.getElementById('folderBreadcrumb');
 const btnNewFolder = document.getElementById('btnNewFolder');
+const btnToggleTrash = document.getElementById('btnToggleTrash');
 const userPill = document.getElementById('userPill');
 const userEmailEl = document.getElementById('userEmail');
 const btnGoogleSignIn = document.getElementById('btnGoogleSignIn');
@@ -62,6 +71,7 @@ const newDocSpace = document.getElementById('newDocSpace');
 const ROUTES = new Set(['home', 'files', 'email', 'tasks', 'calendar', 'admin']);
 let filesLoaded = false;
 let adminConfigLoaded = false;
+let managedFileId = null;
 
 // ── Icons ──────────────────────────────────────────────────
 const TYPE_ICON = {
@@ -164,6 +174,129 @@ function renderAdminConfig(data) {
   setConfigValue('cfgJwtSecret', data.secrets?.jwtSecret || '');
 }
 
+function getCurrentRootFolderId() {
+  return viewingTrash ? TRASH_ROOTS[currentSpace] : SPACE_ROOTS[currentSpace];
+}
+
+function getFolderById(id) {
+  return allFolders.find((folder) => folder.id === id) || null;
+}
+
+function updateTrashButton() {
+  if (!btnToggleTrash) return;
+  btnToggleTrash.innerHTML = viewingTrash
+    ? '<svg viewBox="0 0 20 20" fill="currentColor"><path d="M12.707 4.293a1 1 0 010 1.414L9.414 9H17a1 1 0 110 2H9.414l3.293 3.293a1 1 0 01-1.414 1.414l-5-5a1 1 0 010-1.414l5-5a1 1 0 011.414 0z"/></svg>Back to Files'
+    : '<svg viewBox="0 0 20 20" fill="currentColor"><path d="M6 2a1 1 0 00-1 1v1H3.5a1 1 0 100 2h.538l.853 10.232A2 2 0 006.884 18h6.232a2 2 0 001.993-1.768L15.962 6h.538a1 1 0 100-2H15V3a1 1 0 00-1-1H6zm2 2V4h4V4H8z"/></svg>Bin';
+}
+
+function getFolderLookupLabel(folder, index) {
+  return `${index + 1}. ${folder.path}`;
+}
+
+function getFolderOptionLabel(folder) {
+  return folder.path;
+}
+
+async function fetchFolderTree(parentId, trail = []) {
+  const res = await fetch(`/api/folders?parentId=${encodeURIComponent(parentId)}`);
+  if (!res.ok) throw new Error('Failed to load folders');
+  const folders = await res.json();
+  const nested = await Promise.all(folders
+    .filter((folder) => folder.space === currentSpace && !folder.isTrash)
+    .map(async (folder) => {
+      const pathItems = [...trail, folder.name];
+      const children = await fetchFolderTree(folder.id, pathItems);
+      return [{ ...folder, path: pathItems.join(' / ') }, ...children];
+    }));
+  return nested.flat();
+}
+
+async function chooseDestinationFolder(defaultFolderId = currentFolderId, actionLabel = 'Select a folder') {
+  const rootId = SPACE_ROOTS[currentSpace];
+  const rootLabel = SPACE_META[currentSpace]?.label || 'Root';
+  const folders = [{ id: rootId, path: rootLabel }, ...(await fetchFolderTree(rootId, [rootLabel]))]
+    .filter((folder) => folder.id !== TRASH_ROOTS[currentSpace]);
+
+  const defaultIndex = Math.max(0, folders.findIndex((folder) => folder.id === defaultFolderId));
+  const promptText = [
+    `${actionLabel}:`,
+    ...folders.map((folder, index) => getFolderLookupLabel(folder, index)),
+  ].join('\n');
+  const selection = window.prompt(promptText, String(defaultIndex + 1));
+  if (selection === null) return null;
+
+  const selectedIndex = Number.parseInt(selection, 10) - 1;
+  if (!Number.isInteger(selectedIndex) || !folders[selectedIndex]) {
+    throw new Error('Invalid folder selection');
+  }
+  return folders[selectedIndex];
+}
+
+async function getDestinationFolders() {
+  const rootId = SPACE_ROOTS[currentSpace];
+  const rootLabel = SPACE_META[currentSpace]?.label || 'Root';
+  return [{ id: rootId, path: rootLabel }, ...(await fetchFolderTree(rootId, [rootLabel]))]
+    .filter((folder) => folder.id !== TRASH_ROOTS[currentSpace]);
+}
+
+async function apiJson(url, options = {}) {
+  const res = await fetch(url, options);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || 'Request failed');
+  return body;
+}
+
+function getManagedFile() {
+  return allFiles.find((entry) => entry.id === managedFileId) || null;
+}
+
+function closeFileManageModal() {
+  managedFileId = null;
+  fileManageModal.classList.add('hidden');
+}
+
+async function populateFileDestinationOptions(selectedFolderId) {
+  const folders = await getDestinationFolders();
+  fileManageDestination.innerHTML = folders.map((folder) => `
+    <option value="${folder.id}">${escHtml(getFolderOptionLabel(folder))}</option>
+  `).join('');
+
+  if (!folders.length) {
+    fileManageDestination.value = '';
+    return;
+  }
+
+  fileManageDestination.value = selectedFolderId && folders.some((folder) => folder.id === selectedFolderId)
+    ? selectedFolderId
+    : folders[0].id;
+}
+
+async function openFileManageModal(id) {
+  const file = allFiles.find((entry) => entry.id === id);
+  if (!file) return;
+
+  managedFileId = id;
+  fileManageTitle.textContent = `Manage ${file.deletedAt ? 'Bin File' : 'File'}`;
+  fileManageName.value = file.name;
+
+  const inTrash = !!file.deletedAt;
+  fileManageDestinationRow.classList.toggle('hidden', inTrash);
+  fileManageTrashNote.classList.toggle('hidden', !inTrash);
+  document.getElementById('btnFileRename').classList.toggle('hidden', inTrash);
+  document.getElementById('btnFileMove').classList.toggle('hidden', inTrash);
+  document.getElementById('btnFileCopy').classList.toggle('hidden', inTrash);
+  document.getElementById('btnFileRestore').classList.toggle('hidden', !inTrash);
+  document.getElementById('btnFileDelete').classList.toggle('hidden', inTrash);
+  document.getElementById('btnFileDeletePermanent').classList.toggle('hidden', !inTrash);
+
+  if (!inTrash) {
+    await populateFileDestinationOptions(currentFolderId);
+  }
+
+  fileManageModal.classList.remove('hidden');
+  setTimeout(() => fileManageName.focus(), 50);
+}
+
 async function loadAdminConfig(force = false) {
   if (adminConfigLoaded && !force) return;
 
@@ -193,14 +326,16 @@ function applySpaceTabs() {
     spaceDescription.innerHTML = `<span class="space-desc-icon">${meta.icon}</span>${meta.desc}`;
   }
 
-  // Only shared space supports sub-folder navigation
   const folderToolbar = document.querySelector('.folder-toolbar');
-  if (folderToolbar) folderToolbar.classList.toggle('hidden', currentSpace !== 'shared');
+  if (folderToolbar) folderToolbar.classList.remove('hidden');
+  if (btnNewFolder) btnNewFolder.classList.toggle('hidden', currentSpace !== 'shared' || viewingTrash);
+  updateTrashButton();
 }
 
 function switchSpace(space) {
   if (!SPACE_ROOTS[space]) return;
   currentSpace = space;
+  viewingTrash = false;
   currentFolderId = SPACE_ROOTS[space];
   filesLoaded = false;
   applySpaceTabs();
@@ -209,7 +344,7 @@ function switchSpace(space) {
 
 function renderBreadcrumb() {
   if (!folderPath.length) {
-    folderBreadcrumb.innerHTML = '<span class="crumb current">Root</span>';
+    folderBreadcrumb.innerHTML = `<span class="crumb current">${viewingTrash ? 'Bin' : 'Root'}</span>`;
     return;
   }
 
@@ -261,7 +396,8 @@ function renderFiles() {
       ? `<span class="space-badge space-badge-${space}">${space === 'private' ? '🔒' : '📚'}</span>`
       : '';
     // Show delete only if owner (or for shared: anyone can delete)
-    const canDelete = space === 'shared' || isOwner;
+    const inTrash = !!file.deletedAt;
+    const canDelete = space === 'shared' || isOwner || (space === 'library' && isCurrentUserAdmin);
     return `
       <div class="file-card" data-id="${file.id}">
         <div class="file-card-thumb ${iconClass}">
@@ -271,11 +407,12 @@ function renderFiles() {
         ${spaceBadgeHtml}
         <div class="file-card-body">
           <div class="file-card-name" title="${escHtml(file.name)}">${escHtml(file.name)}</div>
-          <div class="file-card-meta">${formatSize(file.size)} · ${formatDate(file.uploadedAt)}</div>
+          <div class="file-card-meta">${formatSize(file.size)} · ${formatDate(file.uploadedAt)}${inTrash ? ' · In bin' : ''}</div>
         </div>
         <div class="file-card-actions">
           <button class="btn btn-primary btn-open" data-id="${file.id}">Open</button>
-          ${canDelete ? `<button class="btn btn-danger btn-delete" data-id="${file.id}" title="Delete">✕</button>` : ''}
+          <button class="btn btn-ghost btn-download" data-id="${file.id}">Save</button>
+          ${canDelete ? `<button class="btn ${inTrash ? 'btn-danger' : 'btn-ghost'} btn-manage" data-id="${file.id}" title="Manage">${inTrash ? 'Trash' : 'Manage'}</button>` : ''}
         </div>
       </div>`;
   });
@@ -294,15 +431,22 @@ async function loadFiles(folderId = currentFolderId) {
     allFolders = payload.folders || [];
     allFiles = payload.files || [];
     folderPath = payload.path || [];
+    viewingTrash = !!payload.folder?.isTrash;
 
     renderBreadcrumb();
     renderFiles();
+    updateTrashButton();
   } catch (e) {
     showToast('Could not load folder: ' + e.message, 'error');
   }
 }
 
 async function createFolder() {
+  if (viewingTrash) {
+    showToast('Cannot create folders in the bin', 'error');
+    return;
+  }
+
   const name = prompt('Folder name');
   if (!name) return;
 
@@ -382,15 +526,86 @@ function openFile(id) {
 async function deleteFile(id) {
   const file = allFiles.find((f) => f.id === id);
   if (!file) return;
-  if (!confirm(`Delete "${file.name}"? This cannot be undone.`)) return;
+  const action = file.deletedAt ? 'Permanently delete' : 'Move to the bin';
+  if (!confirm(`${action} "${file.name}"?`)) return;
 
   try {
-    const res = await fetch(`/api/files/${id}`, { method: 'DELETE' });
-    if (!res.ok) throw new Error('Delete failed');
+    await apiJson(`/api/files/${id}`, { method: 'DELETE' });
     await loadFiles(currentFolderId);
-    showToast('File deleted', 'success');
+    closeFileManageModal();
+    showToast(file.deletedAt ? 'File deleted permanently' : 'File moved to bin', 'success');
   } catch (e) {
     showToast('Delete failed: ' + e.message, 'error');
+  }
+}
+
+function downloadFile(id) {
+  window.location.href = `/api/files/${encodeURIComponent(id)}/download`;
+}
+
+async function renameFile(id) {
+  const file = allFiles.find((entry) => entry.id === id);
+  if (!file) return;
+  const trimmed = String(fileManageName?.value || file.name).trim();
+  if (!trimmed) {
+    showToast('File name is required', 'error');
+    return;
+  }
+
+  await apiJson(`/api/files/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: trimmed }),
+  });
+  await loadFiles(currentFolderId);
+  closeFileManageModal();
+  showToast('File renamed', 'success');
+}
+
+async function moveFileToFolder(id, destinationId = fileManageDestination.value) {
+  if (!destinationId) {
+    showToast('Destination folder is required', 'error');
+    return;
+  }
+
+  await apiJson(`/api/files/${encodeURIComponent(id)}/move`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folderId: destinationId }),
+  });
+  await loadFiles(currentFolderId);
+  closeFileManageModal();
+  showToast('File moved', 'success');
+}
+
+async function copyFileToFolder(id, destinationId = fileManageDestination.value) {
+  if (!destinationId) {
+    showToast('Destination folder is required', 'error');
+    return;
+  }
+
+  await apiJson(`/api/files/${encodeURIComponent(id)}/copy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folderId: destinationId }),
+  });
+  await loadFiles(currentFolderId);
+  closeFileManageModal();
+  showToast('File copied', 'success');
+}
+
+async function restoreFile(id) {
+  await apiJson(`/api/files/${encodeURIComponent(id)}/restore`, { method: 'POST' });
+  await loadFiles(currentFolderId);
+  closeFileManageModal();
+  showToast('File restored', 'success');
+}
+
+async function manageFile(id) {
+  try {
+    await openFileManageModal(id);
+  } catch (e) {
+    showToast(e.message || 'Could not open file manager', 'error');
   }
 }
 
@@ -501,6 +716,10 @@ window.addEventListener('hashchange', () => {
 });
 
 btnNewFolder.addEventListener('click', createFolder);
+btnToggleTrash?.addEventListener('click', () => {
+  viewingTrash = !viewingTrash;
+  loadFiles(getCurrentRootFolderId());
+});
 
 document.getElementById('btnRefreshAdminConfig')?.addEventListener('click', () => {
   loadAdminConfig(true);
@@ -534,9 +753,60 @@ fileInput.addEventListener('change', () => {
 document.getElementById('btnNewDoc').addEventListener('click', openNewDocModal);
 document.getElementById('btnCancelNew').addEventListener('click', closeNewDocModal);
 document.getElementById('btnConfirmNew').addEventListener('click', createNewDocument);
+document.getElementById('btnFileManageCancel').addEventListener('click', closeFileManageModal);
+document.getElementById('btnFileRename').addEventListener('click', async () => {
+  const file = getManagedFile();
+  if (!file) return;
+  try {
+    await renameFile(file.id);
+  } catch (e) {
+    showToast(e.message || 'Rename failed', 'error');
+  }
+});
+document.getElementById('btnFileMove').addEventListener('click', async () => {
+  const file = getManagedFile();
+  if (!file) return;
+  try {
+    await moveFileToFolder(file.id);
+  } catch (e) {
+    showToast(e.message || 'Move failed', 'error');
+  }
+});
+document.getElementById('btnFileCopy').addEventListener('click', async () => {
+  const file = getManagedFile();
+  if (!file) return;
+  try {
+    await copyFileToFolder(file.id);
+  } catch (e) {
+    showToast(e.message || 'Copy failed', 'error');
+  }
+});
+document.getElementById('btnFileDelete').addEventListener('click', async () => {
+  const file = getManagedFile();
+  if (!file) return;
+  await deleteFile(file.id);
+});
+document.getElementById('btnFileDeletePermanent').addEventListener('click', async () => {
+  const file = getManagedFile();
+  if (!file) return;
+  await deleteFile(file.id);
+});
+document.getElementById('btnFileRestore').addEventListener('click', async () => {
+  const file = getManagedFile();
+  if (!file) return;
+  try {
+    await restoreFile(file.id);
+  } catch (e) {
+    showToast(e.message || 'Restore failed', 'error');
+  }
+});
 
 newDocModal.addEventListener('click', (event) => {
   if (event.target === newDocModal) closeNewDocModal();
+});
+
+fileManageModal.addEventListener('click', (event) => {
+  if (event.target === fileManageModal) closeFileManageModal();
 });
 
 // Doc type selector
@@ -558,6 +828,18 @@ newDocName.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') closeNewDocModal();
 });
 
+fileManageName.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    const file = getManagedFile();
+    if (file && !file.deletedAt) {
+      renameFile(file.id).catch((e) => {
+        showToast(e.message || 'Rename failed', 'error');
+      });
+    }
+  }
+  if (event.key === 'Escape') closeFileManageModal();
+});
+
 // Filter tabs
 document.querySelectorAll('.filter-tab').forEach((tab) => {
   tab.addEventListener('click', () => {
@@ -577,13 +859,20 @@ document.getElementById('searchInput').addEventListener('input', (event) => {
 // File grid – open / delete / folder enter
 fileGrid.addEventListener('click', (event) => {
   const openBtn = event.target.closest('.btn-open');
-  const deleteBtn = event.target.closest('.btn-delete');
+  const downloadBtn = event.target.closest('.btn-download');
+  const manageBtn = event.target.closest('.btn-manage');
   const folderCard = event.target.closest('.folder-card');
   const card = event.target.closest('.file-card');
 
-  if (deleteBtn) {
+  if (downloadBtn) {
     event.stopPropagation();
-    deleteFile(deleteBtn.dataset.id);
+    downloadFile(downloadBtn.dataset.id);
+    return;
+  }
+
+  if (manageBtn) {
+    event.stopPropagation();
+    manageFile(manageBtn.dataset.id);
     return;
   }
 
@@ -637,3 +926,4 @@ if (!location.hash || !ROUTES.has(getRouteFromHash())) {
 syncHeaderAuthState();
 applyRoute(getRouteFromHash());
 applySpaceTabs();
+updateTrashButton();

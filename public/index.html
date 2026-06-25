@@ -85,6 +85,37 @@
     </div>
   </div>
 
+  <div class="modal-overlay hidden" id="fileManageModal">
+    <div class="modal">
+      <h2 id="fileManageTitle">Manage File</h2>
+      <div class="form-row">
+        <label for="fileManageName">File name</label>
+        <input type="text" id="fileManageName" maxlength="200" />
+      </div>
+      <div class="form-row" id="fileManageDestinationRow">
+        <label for="fileManageDestination">Destination folder</label>
+        <select id="fileManageDestination"></select>
+      </div>
+      <div class="form-row hidden" id="fileManageTrashNote">
+        <label>Bin</label>
+        <div class="modal-note">This file is in the bin. You can restore it or permanently delete it.</div>
+      </div>
+      <div class="modal-actions modal-actions-split">
+        <div class="modal-actions-left">
+          <button class="btn btn-danger hidden" id="btnFileDeletePermanent" type="button">Delete Permanently</button>
+          <button class="btn btn-danger" id="btnFileDelete" type="button">Move to Bin</button>
+        </div>
+        <div class="modal-actions-right">
+          <button class="btn btn-ghost" id="btnFileManageCancel" type="button">Cancel</button>
+          <button class="btn btn-ghost hidden" id="btnFileRestore" type="button">Restore</button>
+          <button class="btn btn-ghost" id="btnFileCopy" type="button">Copy</button>
+          <button class="btn btn-ghost" id="btnFileMove" type="button">Move</button>
+          <button class="btn btn-primary" id="btnFileRename" type="button">Save Name</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Upload progress toast -->
   <div class="toast hidden" id="toast"></div>
 
@@ -165,10 +196,16 @@
 
         <div class="folder-toolbar">
           <div class="breadcrumb" id="folderBreadcrumb"></div>
-          <button class="btn btn-ghost" id="btnNewFolder" type="button">
-            <svg viewBox="0 0 20 20" fill="currentColor"><path d="M2 5a2 2 0 012-2h3.586a2 2 0 011.414.586L10.414 5H16a2 2 0 012 2v1H2V5z"/><path d="M2 10h16v5a2 2 0 01-2 2H4a2 2 0 01-2-2v-5z"/><path d="M10 11a1 1 0 011 1v1h1a1 1 0 110 2h-1v1a1 1 0 11-2 0v-1H8a1 1 0 110-2h1v-1a1 1 0 011-1z"/></svg>
-            New Folder
-          </button>
+          <div class="folder-actions">
+            <button class="btn btn-ghost" id="btnToggleTrash" type="button">
+              <svg viewBox="0 0 20 20" fill="currentColor"><path d="M6 2a1 1 0 00-1 1v1H3.5a1 1 0 100 2h.538l.853 10.232A2 2 0 006.884 18h6.232a2 2 0 001.993-1.768L15.962 6h.538a1 1 0 100-2H15V3a1 1 0 00-1-1H6zm2 2V4h4V4H8z"/></svg>
+              Bin
+            </button>
+            <button class="btn btn-ghost" id="btnNewFolder" type="button">
+              <svg viewBox="0 0 20 20" fill="currentColor"><path d="M2 5a2 2 0 012-2h3.586a2 2 0 011.414.586L10.414 5H16a2 2 0 012 2v1H2V5z"/><path d="M2 10h16v5a2 2 0 01-2 2H4a2 2 0 01-2-2v-5z"/><path d="M10 11a1 1 0 011 1v1h1a1 1 0 110 2h-1v1a1 1 0 11-2 0v-1H8a1 1 0 110-2h1v-1a1 1 0 011-1z"/></svg>
+              New Folder
+            </button>
+          </div>
         </div>
 
         <!-- File grid -->

@@ -183,6 +183,12 @@ main {
   margin-bottom: 14px;
 }
 
+.folder-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .breadcrumb {
   display: flex;
   align-items: center;
@@ -343,7 +349,7 @@ main {
   gap: 4px;
   padding: 0 8px 8px;
 }
-.file-card-actions .btn { flex: 1; justify-content: center; padding: 5px 8px; font-size: 0.78rem; }
+.file-card-actions .btn { flex: 1; justify-content: center; padding: 5px 8px; font-size: 0.74rem; }
 
 /* type badge */
 .type-badge {
@@ -450,10 +456,38 @@ main {
   outline: none;
   transition: border-color .15s;
 }
+.form-row select {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text);
+  font-size: 0.9rem;
+  padding: 9px 12px;
+  outline: none;
+  transition: border-color .15s;
+}
 .form-row input:focus { border-color: var(--accent); }
+.form-row select:focus { border-color: var(--accent); }
 .form-row input::placeholder { color: var(--text-muted); }
 
+.modal-note {
+  background: rgba(68,105,149,.12);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 0.84rem;
+  line-height: 1.45;
+  padding: 10px 12px;
+}
+
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.modal-actions-split { justify-content: space-between; align-items: center; flex-wrap: wrap; }
+.modal-actions-left,
+.modal-actions-right {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 
 /* =========================================================
    Toast
@@ -950,6 +984,7 @@ textarea:focus { border-color: var(--accent); }
   .new-doc-types { flex-direction: column; }
   .file-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
   .folder-toolbar { flex-direction: column; align-items: flex-start; }
+  .folder-actions { width: 100%; flex-wrap: wrap; }
   .filter-tabs { flex-wrap: wrap; }
   .search-wrap input { width: 100%; }
   .toolbar { flex-direction: column; align-items: flex-start; }

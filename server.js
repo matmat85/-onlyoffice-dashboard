@@ -19,6 +19,17 @@ const DATA_DIR = path.join(__dirname, 'data');
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
 const DB_FILE = path.join(DATA_DIR, 'dashboard.db');
 const ROOT_FOLDER_ID = 'root';
+const SPACE_ROOT_IDS = {
+  private: 'root-private',
+  shared: ROOT_FOLDER_ID,
+  library: 'root-library',
+};
+const TRASH_FOLDER_IDS = {
+  private: 'root-private-trash',
+  shared: 'root-trash',
+  library: 'root-library-trash',
+};
+const PROTECTED_ROOTS = new Set([...Object.values(SPACE_ROOT_IDS), ...Object.values(TRASH_FOLDER_IDS)]);
 const RUNTIME_CONFIG_FILE = path.join(DATA_DIR, 'runtime-config.json');
 
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -212,8 +223,25 @@ function ensureSpaceColumns() {
     .run(new Date().toISOString());
   db.prepare("INSERT OR IGNORE INTO folders (id, name, parent_id, created_at, space) VALUES ('root-library', 'Business Library', NULL, ?, 'library')")
     .run(new Date().toISOString());
+  db.prepare("INSERT OR IGNORE INTO folders (id, name, parent_id, created_at, space) VALUES ('root-trash', 'Team Shared Bin', NULL, ?, 'shared')")
+    .run(new Date().toISOString());
+  db.prepare("INSERT OR IGNORE INTO folders (id, name, parent_id, created_at, space) VALUES ('root-private-trash', 'My Files Bin', NULL, ?, 'private')")
+    .run(new Date().toISOString());
+  db.prepare("INSERT OR IGNORE INTO folders (id, name, parent_id, created_at, space) VALUES ('root-library-trash', 'Business Library Bin', NULL, ?, 'library')")
+    .run(new Date().toISOString());
 }
 ensureSpaceColumns();
+
+function ensureFileLifecycleColumns() {
+  const fileColumns = db.prepare('PRAGMA table_info(files)').all();
+  if (!fileColumns.some((c) => c.name === 'previous_folder_id')) {
+    db.exec('ALTER TABLE files ADD COLUMN previous_folder_id TEXT');
+  }
+  if (!fileColumns.some((c) => c.name === 'deleted_at')) {
+    db.exec('ALTER TABLE files ADD COLUMN deleted_at TEXT');
+  }
+}
+ensureFileLifecycleColumns();
 
 function parseEmailList(raw) {
   return String(raw || '')
@@ -317,6 +345,8 @@ function toApiFile(row) {
     type: row.document_type,
     uploadedAt: row.uploaded_at,
     folderId: row.folder_id,
+    previousFolderId: row.previous_folder_id || null,
+    deletedAt: row.deleted_at || null,
     space: row.space || 'shared',
     ownerEmail: row.owner_email || '',
   };
@@ -329,6 +359,7 @@ function toApiFolder(row) {
     parentId: row.parent_id,
     createdAt: row.created_at,
     space: row.space || 'shared',
+    isTrash: PROTECTED_ROOTS.has(row.id) && Object.values(TRASH_FOLDER_IDS).includes(row.id),
   };
 }
 
@@ -341,7 +372,13 @@ const insertFileStmt = db.prepare(`
 `);
 const deleteFileStmt = db.prepare('DELETE FROM files WHERE id = ?');
 const renameFileStmt = db.prepare('UPDATE files SET original_name = ? WHERE id = ?');
-const moveFileStmt = db.prepare('UPDATE files SET folder_id = ? WHERE id = ?');
+const updateFileLocationStmt = db.prepare(`
+  UPDATE files
+  SET folder_id = @folder_id,
+      previous_folder_id = @previous_folder_id,
+      deleted_at = @deleted_at
+  WHERE id = @id
+`);
 
 const getFolderByIdStmt = db.prepare('SELECT * FROM folders WHERE id = ?');
 const listFoldersByParentStmt = db.prepare(`
@@ -369,6 +406,18 @@ function buildFolderPath(folderId) {
   return pathItems.reverse();
 }
 
+function isTrashFolderId(folderId) {
+  return Object.values(TRASH_FOLDER_IDS).includes(folderId);
+}
+
+function getTrashFolderIdForSpace(space) {
+  return TRASH_FOLDER_IDS[space] || TRASH_FOLDER_IDS.shared;
+}
+
+function getRootFolderIdForSpace(space) {
+  return SPACE_ROOT_IDS[space] || SPACE_ROOT_IDS.shared;
+}
+
 const getUserByEmailStmt = db.prepare('SELECT * FROM users WHERE email = ?');
 const getUserByIdStmt = db.prepare('SELECT id, email, name, is_admin, created_at FROM users WHERE id = ?');
 const countUsersStmt = db.prepare('SELECT COUNT(*) AS count FROM users');
@@ -380,6 +429,56 @@ const listUsersAdminStmt = db.prepare('SELECT id, email, name, is_admin, created
 const deleteUserStmt = db.prepare('DELETE FROM users WHERE id = ?');
 const setUserAdminStmt = db.prepare('UPDATE users SET is_admin = ? WHERE id = ?');
 const setUserNameStmt = db.prepare('UPDATE users SET name = ? WHERE id = ?');
+
+function canReadSpace(req, space, ownerEmail = '') {
+  const userEmail = req.session?.user?.email || '';
+  if (space === 'private') return !ownerEmail || ownerEmail === userEmail;
+  if (space === 'shared') return isAllowedForShared(userEmail);
+  return true;
+}
+
+function canManageSpace(req, space, ownerEmail = '') {
+  const userEmail = req.session?.user?.email || '';
+  if (space === 'private') return ownerEmail === userEmail;
+  if (space === 'shared') return isAllowedForShared(userEmail);
+  if (space === 'library') return ownerEmail === userEmail || isAdminRequest(req);
+  return false;
+}
+
+function getFileReadError(req, entry) {
+  if (!entry) return 'File not found';
+  if (!canReadSpace(req, entry.space || 'shared', entry.owner_email || '')) {
+    return 'Access denied.';
+  }
+  return null;
+}
+
+function getFileManageError(req, entry) {
+  if (!entry) return 'File not found';
+  if (!canManageSpace(req, entry.space || 'shared', entry.owner_email || '')) {
+    return entry.space === 'library'
+      ? 'Only admins or the file owner can manage library files.'
+      : 'Access denied.';
+  }
+  return null;
+}
+
+function getFolderAccessError(req, folder, ownerEmail = '') {
+  if (!folder) return 'Folder not found';
+  if (!canReadSpace(req, folder.space || 'shared', ownerEmail)) {
+    return 'Access denied.';
+  }
+  return null;
+}
+
+function updateFileLocation(entry, folderId, previousFolderId = null, deletedAt = null) {
+  updateFileLocationStmt.run({
+    id: entry.id,
+    folder_id: folderId,
+    previous_folder_id: previousFolderId,
+    deleted_at: deletedAt,
+  });
+}
 
 function normaliseEmail(email) {
   return String(email || '').trim().toLowerCase();
@@ -709,9 +808,9 @@ app.get('/api/folders/:id/contents', (req, res) => {
   const space = folder.space || 'shared';
   const userEmail = req.session.user.email;
 
-  // Shared-space access check
-  if (space === 'shared' && !isAllowedForShared(userEmail)) {
-    return res.status(403).json({ error: 'You are not in the allowed users list.' });
+  const folderError = getFolderAccessError(req, folder);
+  if (folderError) {
+    return res.status(403).json({ error: folderError });
   }
 
   const folders = listFoldersByParentStmt.all(folderId, folderId).map(toApiFolder);
@@ -746,6 +845,7 @@ app.post('/api/folders', (req, res) => {
 
   const parent = getFolderByIdStmt.get(parentId);
   if (!parent) return res.status(404).json({ error: 'Parent folder not found' });
+  if (isTrashFolderId(parentId)) return res.status(400).json({ error: 'Cannot create folders inside the bin' });
 
   // Folders inherit the space of their parent
   const space = parent.space || 'shared';
@@ -764,7 +864,6 @@ app.post('/api/folders', (req, res) => {
 
 app.patch('/api/folders/:id', (req, res) => {
   const id = req.params.id;
-  const PROTECTED_ROOTS = new Set([ROOT_FOLDER_ID, 'root-private', 'root-library']);
   if (PROTECTED_ROOTS.has(id)) return res.status(400).json({ error: 'Root folders cannot be renamed' });
 
   const name = String(req.body?.name || '').trim();
@@ -779,7 +878,6 @@ app.patch('/api/folders/:id', (req, res) => {
 
 app.delete('/api/folders/:id', (req, res) => {
   const id = req.params.id;
-  const PROTECTED_ROOTS = new Set([ROOT_FOLDER_ID, 'root-private', 'root-library']);
   if (PROTECTED_ROOTS.has(id)) return res.status(400).json({ error: 'Root folders cannot be deleted' });
 
   const folder = getFolderByIdStmt.get(id);
@@ -805,6 +903,7 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
   const folderId = String(req.body?.folderId || ROOT_FOLDER_ID).trim();
   const folder = getFolderByIdStmt.get(folderId);
   if (!folder) return res.status(400).json({ error: 'Invalid folder ID' });
+  if (isTrashFolderId(folderId)) return res.status(400).json({ error: 'Cannot upload directly into the bin' });
 
   const id = crypto.randomUUID();
   const VALID_SPACES = new Set(['private', 'shared', 'library']);
@@ -830,25 +929,18 @@ app.delete('/api/files/:id', (req, res) => {
   const entry = getFileByIdStmt.get(req.params.id);
   if (!entry) return res.status(404).json({ error: 'Not found' });
 
-  const userEmail = req.session.user.email;
-  const space = entry.space || 'shared';
+  const manageError = getFileManageError(req, entry);
+  if (manageError) return res.status(403).json({ error: manageError });
 
-  // Private: only owner can delete
-  if (space === 'private' && entry.owner_email !== userEmail) {
-    return res.status(403).json({ error: 'Access denied.' });
-  }
-  // Library: only admin or owner can delete
-  if (space === 'library') {
-    const dbUser = getUserByIdStmt.get(req.session.user.id);
-    if (!dbUser?.is_admin && entry.owner_email !== userEmail) {
-      return res.status(403).json({ error: 'Only admins or the file owner can delete library files.' });
-    }
+  if (!isTrashFolderId(entry.folder_id)) {
+    updateFileLocation(entry, getTrashFolderIdForSpace(entry.space || 'shared'), entry.folder_id, new Date().toISOString());
+    return res.json({ ok: true, trashed: true });
   }
 
   const filePath = path.join(UPLOADS_DIR, entry.stored_name);
   if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
   deleteFileStmt.run(req.params.id);
-  res.json({ ok: true });
+  res.json({ ok: true, deleted: true });
 });
 
 // ---- API: get editor config for a file ----
@@ -956,6 +1048,7 @@ app.post('/api/create', (req, res) => {
   const folderId = String(req.body?.folderId || ROOT_FOLDER_ID).trim();
   const folder = getFolderByIdStmt.get(folderId);
   if (!folder) return res.status(400).json({ error: 'Invalid folder ID' });
+  if (isTrashFolderId(folderId)) return res.status(400).json({ error: 'Cannot create files directly in the bin' });
 
   const templateDir = path.join(__dirname, 'templates');
   const templateFile = path.join(templateDir, `blank.${type}`);
@@ -998,6 +1091,8 @@ app.patch('/api/files/:id', (req, res) => {
 
   const entry = getFileByIdStmt.get(req.params.id);
   if (!entry) return res.status(404).json({ error: 'Not found' });
+  const manageError = getFileManageError(req, entry);
+  if (manageError) return res.status(403).json({ error: manageError });
 
   renameFileStmt.run(name.substring(0, 200), req.params.id);
   res.json({ ok: true });
@@ -1009,12 +1104,91 @@ app.patch('/api/files/:id/move', (req, res) => {
 
   const file = getFileByIdStmt.get(req.params.id);
   if (!file) return res.status(404).json({ error: 'File not found' });
+  const manageError = getFileManageError(req, file);
+  if (manageError) return res.status(403).json({ error: manageError });
 
   const folder = getFolderByIdStmt.get(folderId);
   if (!folder) return res.status(404).json({ error: 'Folder not found' });
+  const folderError = getFolderAccessError(req, folder, file.owner_email || '');
+  if (folderError) return res.status(403).json({ error: folderError });
+  if ((folder.space || 'shared') !== (file.space || 'shared')) {
+    return res.status(400).json({ error: 'Files can only be moved within the same space' });
+  }
 
-  moveFileStmt.run(folderId, req.params.id);
+  if (isTrashFolderId(folderId)) {
+    updateFileLocation(file, folderId, file.folder_id, new Date().toISOString());
+  } else {
+    updateFileLocation(file, folderId, null, null);
+  }
+
   res.json({ ok: true });
+});
+
+app.post('/api/files/:id/copy', (req, res) => {
+  const source = getFileByIdStmt.get(req.params.id);
+  if (!source) return res.status(404).json({ error: 'File not found' });
+  const manageError = getFileManageError(req, source);
+  if (manageError) return res.status(403).json({ error: manageError });
+
+  const folderId = String(req.body?.folderId || source.folder_id || getRootFolderIdForSpace(source.space || 'shared')).trim();
+  const folder = getFolderByIdStmt.get(folderId);
+  if (!folder) return res.status(404).json({ error: 'Folder not found' });
+  if (isTrashFolderId(folderId)) return res.status(400).json({ error: 'Cannot copy files into the bin' });
+  if ((folder.space || 'shared') !== (source.space || 'shared')) {
+    return res.status(400).json({ error: 'Files can only be copied within the same space' });
+  }
+
+  const sourcePath = path.join(UPLOADS_DIR, source.stored_name);
+  if (!fs.existsSync(sourcePath)) return res.status(404).json({ error: 'Stored file is missing' });
+
+  const copyId = crypto.randomUUID();
+  const safeName = source.original_name.replace(/[^a-zA-Z0-9._-]/g, '_').substring(0, 200);
+  const storedName = `${crypto.randomUUID().slice(0, 8)}_${safeName}`;
+  fs.copyFileSync(sourcePath, path.join(UPLOADS_DIR, storedName));
+
+  const ext = path.extname(source.original_name || '');
+  const base = path.basename(source.original_name || 'Copy', ext);
+  const originalName = `${base} Copy${ext}`.substring(0, 200);
+
+  insertFileStmt.run({
+    id: copyId,
+    original_name: originalName,
+    stored_name: storedName,
+    size: source.size,
+    document_type: source.document_type,
+    file_type: source.file_type,
+    uploaded_at: new Date().toISOString(),
+    folder_id: folderId,
+    space: source.space || 'shared',
+    owner_email: req.session.user.email,
+  });
+
+  res.status(201).json({ ok: true, id: copyId, name: originalName });
+});
+
+app.post('/api/files/:id/restore', (req, res) => {
+  const entry = getFileByIdStmt.get(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'File not found' });
+  const manageError = getFileManageError(req, entry);
+  if (manageError) return res.status(403).json({ error: manageError });
+  if (!isTrashFolderId(entry.folder_id)) return res.status(400).json({ error: 'File is not in the bin' });
+
+  const targetFolderId = entry.previous_folder_id || getRootFolderIdForSpace(entry.space || 'shared');
+  const targetFolder = getFolderByIdStmt.get(targetFolderId) || getFolderByIdStmt.get(getRootFolderIdForSpace(entry.space || 'shared'));
+  updateFileLocation(entry, targetFolder.id, null, null);
+  res.json({ ok: true, folderId: targetFolder.id });
+});
+
+app.get('/api/files/:id/download', (req, res) => {
+  const entry = getFileByIdStmt.get(req.params.id);
+  const readError = getFileReadError(req, entry);
+  if (readError) {
+    return res.status(readError === 'File not found' ? 404 : 403).json({ error: readError });
+  }
+
+  const filePath = path.join(UPLOADS_DIR, entry.stored_name);
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Stored file is missing' });
+  res.download(filePath, entry.original_name);
 });
 
 // ---- Admin API: users ----
