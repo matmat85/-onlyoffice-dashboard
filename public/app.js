@@ -519,7 +519,11 @@ function applyRoute(route) {
 
 // ── Open file ──────────────────────────────────────────────
 function openFile(id) {
-  window.open(`/editor/${id}`, '_blank', 'noopener');
+  const qs = new URLSearchParams({
+    folderId: currentFolderId,
+    space: currentSpace,
+  });
+  window.open(`/editor/${id}?${qs.toString()}`, '_blank', 'noopener');
 }
 
 // ── Delete file ────────────────────────────────────────────

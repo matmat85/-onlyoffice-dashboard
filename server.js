@@ -1251,6 +1251,15 @@ app.post('/api/files/:id/save-copy', async (req, res) => {
   const remoteUrl = String(req.body?.url || '').trim();
   if (!remoteUrl) return res.status(400).json({ error: 'url is required' });
 
+  const destinationFolderId = String(req.body?.folderId || source.folder_id || '').trim();
+  const destinationFolder = getFolderByIdStmt.get(destinationFolderId);
+  if (!destinationFolder) return res.status(404).json({ error: 'Destination folder not found' });
+  if (isTrashFolderId(destinationFolderId)) {
+    return res.status(400).json({ error: 'Cannot save copy into the bin' });
+  }
+  const folderAccessError = getFolderAccessError(req, destinationFolder, req.session?.user?.email || '');
+  if (folderAccessError) return res.status(403).json({ error: folderAccessError });
+
   const requestedType = String(req.body?.fileType || '').trim().toLowerCase();
   let originalName = String(req.body?.title || '').trim();
   if (!originalName) {
@@ -1282,8 +1291,8 @@ app.post('/api/files/:id/save-copy', async (req, res) => {
       document_type: info.documentType,
       file_type: info.fileType,
       uploaded_at: new Date().toISOString(),
-      folder_id: source.folder_id,
-      space: source.space || 'shared',
+      folder_id: destinationFolder.id,
+      space: destinationFolder.space || source.space || 'shared',
       owner_email: req.session.user.email,
     });
 

@@ -114,6 +114,11 @@
 
   <script>
     let editorReady = false;
+    const SPACE_ROOTS = { private: 'root-private', shared: 'root', library: 'root-library' };
+    const SPACE_LABELS = { private: 'My Files', shared: 'Team Shared', library: 'Business Library' };
+    const query = new URLSearchParams(location.search);
+    let saveCopySpace = SPACE_ROOTS[query.get('space')] ? query.get('space') : 'shared';
+    let saveCopyFolderId = query.get('folderId') || SPACE_ROOTS[saveCopySpace];
 
     function markEditorReady() {
       if (editorReady) return;
@@ -125,6 +130,56 @@
       const el = document.getElementById('loadingSteps');
       if (el) el.innerHTML += `<div>${ok ? '✔' : '…'} ${msg}</div>`;
       document.getElementById('loadingMsg').textContent = msg;
+    }
+
+    async function apiJson(url) {
+      const resp = await fetch(url);
+      const body = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
+      return body;
+    }
+
+    async function fetchFolderTree(space, parentId, trail = []) {
+      const folders = await apiJson(`/api/folders?parentId=${encodeURIComponent(parentId)}`);
+      const scoped = folders.filter((folder) => folder.space === space && !folder.isTrash);
+      const nested = await Promise.all(scoped.map(async (folder) => {
+        const pathItems = [...trail, folder.name];
+        const children = await fetchFolderTree(space, folder.id, pathItems);
+        return [{ id: folder.id, label: pathItems.join(' / ') }, ...children];
+      }));
+      return nested.flat();
+    }
+
+    async function chooseSaveCopyDestination() {
+      const spaceDefaultIndex = { private: 1, shared: 2, library: 3 }[saveCopySpace] || 2;
+      const spaceChoice = window.prompt(
+        'Save Copy target space:\n1. My Files\n2. Team Shared\n3. Business Library',
+        String(spaceDefaultIndex)
+      );
+
+      if (spaceChoice === null) return null;
+      const spaceMap = { 1: 'private', 2: 'shared', 3: 'library' };
+      const pickedSpace = spaceMap[Number.parseInt(spaceChoice, 10)] || saveCopySpace;
+      const rootId = SPACE_ROOTS[pickedSpace];
+      const rootLabel = SPACE_LABELS[pickedSpace] || 'Root';
+
+      const folders = [{ id: rootId, label: rootLabel }, ...(await fetchFolderTree(pickedSpace, rootId, [rootLabel]))];
+      const defaultFolderIndex = Math.max(0, folders.findIndex((folder) => folder.id === saveCopyFolderId));
+      const folderPrompt = [
+        `Save Copy destination in ${rootLabel}:`,
+        ...folders.map((folder, idx) => `${idx + 1}. ${folder.label}`),
+      ].join('\n');
+
+      const folderChoice = window.prompt(folderPrompt, String(defaultFolderIndex + 1));
+      if (folderChoice === null) return null;
+      const pickedIndex = Number.parseInt(folderChoice, 10) - 1;
+      if (!Number.isInteger(pickedIndex) || !folders[pickedIndex]) {
+        throw new Error('Invalid folder selection');
+      }
+
+      saveCopySpace = pickedSpace;
+      saveCopyFolderId = folders[pickedIndex].id;
+      return { space: pickedSpace, folderId: folders[pickedIndex].id, folderLabel: folders[pickedIndex].label };
     }
 
     function initEditor(config, fileId) {
@@ -152,18 +207,33 @@
                 return;
               }
 
+              let destination;
+              try {
+                destination = await chooseSaveCopyDestination();
+              } catch (e) {
+                step(`Save Copy destination error: ${e.message}`);
+                destination = null;
+              }
+
               step(`Saving copy into dashboard…`, false);
               try {
+                if (!destination) throw new Error('Cancelled by user');
                 const saveResp = await fetch(`/api/files/${encodeURIComponent(fileId)}/save-copy`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ url, title, fileType }),
+                  body: JSON.stringify({
+                    url,
+                    title,
+                    fileType,
+                    folderId: destination.folderId,
+                    space: destination.space,
+                  }),
                 });
                 if (!saveResp.ok) {
                   const err = await saveResp.json().catch(() => ({}));
                   throw new Error(err.error || `HTTP ${saveResp.status}`);
                 }
-                step(`Saved copy into dashboard: ${title}`);
+                step(`Saved copy into dashboard: ${destination.folderLabel}`);
               } catch (e) {
                 step(`Save Copy storage failed: ${e.message}`);
               }
