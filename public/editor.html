@@ -84,6 +84,65 @@
     #errorScreen.visible { display: flex; }
     #errorScreen p { color: #8fa3c0; font-size: 13px; max-width: 400px; text-align: center; }
     #errorScreen a { color: #6ea8fe; text-decoration: none; font-size: 13px; margin-top: 8px; }
+
+    #saveCopyModal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 120;
+      background: rgba(12, 16, 24, 0.72);
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    #saveCopyModal.visible { display: flex; }
+    .save-copy-card {
+      width: min(560px, 100%);
+      background: #141a24;
+      border: 1px solid #2e3a50;
+      border-radius: 12px;
+      padding: 16px;
+      color: #d6e2f2;
+    }
+    .save-copy-card h3 { font-size: 16px; margin-bottom: 10px; }
+    .save-copy-grid {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: 1fr;
+    }
+    .save-copy-field label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 12px;
+      color: #8fa3c0;
+    }
+    .save-copy-field input,
+    .save-copy-field select {
+      width: 100%;
+      height: 36px;
+      border: 1px solid #31435e;
+      background: #0f1520;
+      color: #e2eaf5;
+      border-radius: 8px;
+      padding: 0 10px;
+      font-size: 13px;
+    }
+    .save-copy-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 14px;
+    }
+    .save-copy-actions button {
+      border: 0;
+      border-radius: 8px;
+      height: 34px;
+      padding: 0 12px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    #saveCopyCancel { background: #243247; color: #c7d7ee; }
+    #saveCopyConfirm { background: #2e6ad9; color: #fff; }
   </style>
 </head>
 <body>
@@ -112,6 +171,34 @@
     <a href="/">← Back to Dashboard</a>
   </div>
 
+  <div id="saveCopyModal" role="dialog" aria-modal="true" aria-labelledby="saveCopyTitle">
+    <div class="save-copy-card">
+      <h3 id="saveCopyTitle">Save Copy</h3>
+      <div class="save-copy-grid">
+        <div class="save-copy-field">
+          <label for="saveCopyName">Copy name</label>
+          <input id="saveCopyName" type="text" />
+        </div>
+        <div class="save-copy-field">
+          <label for="saveCopySpace">Target space</label>
+          <select id="saveCopySpace">
+            <option value="private">My Files</option>
+            <option value="shared">Team Shared</option>
+            <option value="library">Business Library</option>
+          </select>
+        </div>
+        <div class="save-copy-field">
+          <label for="saveCopyFolder">Target folder</label>
+          <select id="saveCopyFolder"></select>
+        </div>
+      </div>
+      <div class="save-copy-actions">
+        <button id="saveCopyCancel" type="button">Cancel</button>
+        <button id="saveCopyConfirm" type="button">Save Copy</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     let editorReady = false;
     const SPACE_ROOTS = { private: 'root-private', shared: 'root', library: 'root-library' };
@@ -119,6 +206,12 @@
     const query = new URLSearchParams(location.search);
     let saveCopySpace = SPACE_ROOTS[query.get('space')] ? query.get('space') : 'shared';
     let saveCopyFolderId = query.get('folderId') || SPACE_ROOTS[saveCopySpace];
+    const saveCopyModal = document.getElementById('saveCopyModal');
+    const saveCopyNameInput = document.getElementById('saveCopyName');
+    const saveCopySpaceSelect = document.getElementById('saveCopySpace');
+    const saveCopyFolderSelect = document.getElementById('saveCopyFolder');
+    const saveCopyCancelBtn = document.getElementById('saveCopyCancel');
+    const saveCopyConfirmBtn = document.getElementById('saveCopyConfirm');
 
     function markEditorReady() {
       if (editorReady) return;
@@ -150,36 +243,85 @@
       return nested.flat();
     }
 
-    async function chooseSaveCopyDestination() {
-      const spaceDefaultIndex = { private: 1, shared: 2, library: 3 }[saveCopySpace] || 2;
-      const spaceChoice = window.prompt(
-        'Save Copy target space:\n1. My Files\n2. Team Shared\n3. Business Library',
-        String(spaceDefaultIndex)
-      );
+    function ensureFileTypeExtension(name, fileType) {
+      const trimmed = String(name || '').trim();
+      if (!trimmed) return '';
+      if (!fileType) return trimmed;
+      const expected = `.${String(fileType).toLowerCase()}`;
+      if (trimmed.toLowerCase().endsWith(expected)) return trimmed;
+      return `${trimmed}${expected}`;
+    }
 
-      if (spaceChoice === null) return null;
-      const spaceMap = { 1: 'private', 2: 'shared', 3: 'library' };
-      const pickedSpace = spaceMap[Number.parseInt(spaceChoice, 10)] || saveCopySpace;
-      const rootId = SPACE_ROOTS[pickedSpace];
-      const rootLabel = SPACE_LABELS[pickedSpace] || 'Root';
+    async function renderSaveCopyFolderOptions(space, preferredFolderId) {
+      const rootId = SPACE_ROOTS[space] || SPACE_ROOTS.shared;
+      const rootLabel = SPACE_LABELS[space] || 'Root';
+      const folders = [{ id: rootId, label: rootLabel }, ...(await fetchFolderTree(space, rootId, [rootLabel]))];
+      saveCopyFolderSelect.innerHTML = folders
+        .map((folder) => `<option value="${folder.id}">${folder.label}</option>`)
+        .join('');
 
-      const folders = [{ id: rootId, label: rootLabel }, ...(await fetchFolderTree(pickedSpace, rootId, [rootLabel]))];
-      const defaultFolderIndex = Math.max(0, folders.findIndex((folder) => folder.id === saveCopyFolderId));
-      const folderPrompt = [
-        `Save Copy destination in ${rootLabel}:`,
-        ...folders.map((folder, idx) => `${idx + 1}. ${folder.label}`),
-      ].join('\n');
+      const selected = folders.some((f) => f.id === preferredFolderId) ? preferredFolderId : rootId;
+      saveCopyFolderSelect.value = selected;
+    }
 
-      const folderChoice = window.prompt(folderPrompt, String(defaultFolderIndex + 1));
-      if (folderChoice === null) return null;
-      const pickedIndex = Number.parseInt(folderChoice, 10) - 1;
-      if (!Number.isInteger(pickedIndex) || !folders[pickedIndex]) {
-        throw new Error('Invalid folder selection');
-      }
+    async function chooseSaveCopyDestination(defaultTitle, defaultFileType) {
+      const initialSpace = SPACE_ROOTS[saveCopySpace] ? saveCopySpace : 'shared';
+      saveCopySpaceSelect.value = initialSpace;
+      saveCopyNameInput.value = ensureFileTypeExtension(defaultTitle || 'Copy', defaultFileType) || 'Copy';
 
-      saveCopySpace = pickedSpace;
-      saveCopyFolderId = folders[pickedIndex].id;
-      return { space: pickedSpace, folderId: folders[pickedIndex].id, folderLabel: folders[pickedIndex].label };
+      await renderSaveCopyFolderOptions(initialSpace, saveCopyFolderId);
+      saveCopyModal.classList.add('visible');
+      saveCopyNameInput.focus();
+      saveCopyNameInput.select();
+
+      return new Promise((resolve) => {
+        const cleanup = () => {
+          saveCopyModal.classList.remove('visible');
+          saveCopySpaceSelect.onchange = null;
+          saveCopyCancelBtn.onclick = null;
+          saveCopyConfirmBtn.onclick = null;
+        };
+
+        saveCopySpaceSelect.onchange = async () => {
+          const pickedSpace = saveCopySpaceSelect.value;
+          try {
+            await renderSaveCopyFolderOptions(pickedSpace, SPACE_ROOTS[pickedSpace]);
+          } catch (e) {
+            step(`Folder load failed: ${e.message}`);
+          }
+        };
+
+        saveCopyCancelBtn.onclick = () => {
+          cleanup();
+          resolve(null);
+        };
+
+        saveCopyConfirmBtn.onclick = () => {
+          const pickedSpace = saveCopySpaceSelect.value;
+          const folderId = saveCopyFolderSelect.value;
+          const folderLabel = saveCopyFolderSelect.options[saveCopyFolderSelect.selectedIndex]?.text || 'Selected folder';
+          const title = ensureFileTypeExtension(saveCopyNameInput.value, defaultFileType);
+          if (!title) {
+            step('Copy name is required');
+            saveCopyNameInput.focus();
+            return;
+          }
+          if (!folderId) {
+            step('Target folder is required');
+            return;
+          }
+
+          saveCopySpace = pickedSpace;
+          saveCopyFolderId = folderId;
+          cleanup();
+          resolve({
+            space: pickedSpace,
+            folderId,
+            folderLabel,
+            title,
+          });
+        };
+      });
     }
 
     function initEditor(config, fileId) {
@@ -209,45 +351,48 @@
 
               let destination;
               try {
-                destination = await chooseSaveCopyDestination();
+                destination = await chooseSaveCopyDestination(title, fileType);
               } catch (e) {
                 step(`Save Copy destination error: ${e.message}`);
                 destination = null;
               }
 
-              step(`Saving copy into dashboard…`, false);
-              try {
-                if (!destination) throw new Error('Cancelled by user');
-                const saveResp = await fetch(`/api/files/${encodeURIComponent(fileId)}/save-copy`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    url,
-                    title,
-                    fileType,
-                    folderId: destination.folderId,
-                    space: destination.space,
-                  }),
-                });
-                if (!saveResp.ok) {
-                  const err = await saveResp.json().catch(() => ({}));
-                  throw new Error(err.error || `HTTP ${saveResp.status}`);
+              if (destination) {
+                step(`Saving copy into dashboard…`, false);
+                try {
+                  const saveResp = await fetch(`/api/files/${encodeURIComponent(fileId)}/save-copy`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      url,
+                      title: destination.title,
+                      fileType,
+                      folderId: destination.folderId,
+                      space: destination.space,
+                    }),
+                  });
+                  if (!saveResp.ok) {
+                    const err = await saveResp.json().catch(() => ({}));
+                    throw new Error(err.error || `HTTP ${saveResp.status}`);
+                  }
+                  step(`Saved copy into dashboard: ${destination.title} -> ${destination.folderLabel}`);
+                } catch (e) {
+                  step(`Save Copy storage failed: ${e.message}`);
                 }
-                step(`Saved copy into dashboard: ${destination.folderLabel}`);
-              } catch (e) {
-                step(`Save Copy storage failed: ${e.message}`);
+              } else {
+                step('Save Copy to dashboard cancelled');
               }
 
               // Required by OnlyOffice for the Save Copy as... menu item to appear.
               const link = document.createElement('a');
               link.href = url;
-              link.download = title;
+              link.download = destination?.title || title;
               link.rel = 'noopener';
               link.target = '_blank';
               document.body.appendChild(link);
               link.click();
               link.remove();
-              step(`Save Copy download started — ${title}`);
+              step(`Save Copy download started — ${destination?.title || title}`);
             },
             onError: function(event) {
               const data = event && event.data ? event.data : {};
