@@ -733,10 +733,23 @@ app.use(express.static(path.join(__dirname, 'public')));
 let FILE_TOKEN_SECRET = JWT_SECRET || process.env.SESSION_SECRET || 'file-token-fallback';
 app.use('/uploads', (req, res, next) => {
   if (req.session?.user) return next();
+
+  // Preferred for direct links and browser probes.
   const t = req.query.t;
   if (t) {
     try { jwt.verify(t, FILE_TOKEN_SECRET); return next(); } catch {}
   }
+
+  // Fallback for OnlyOffice when outbox JWT is sent in Authorization
+  // and intermediary proxies alter/drop query parameters.
+  const authHeader = String(req.headers['authorization'] || '');
+  const bearer = authHeader.replace(/^Bearer\s+/i, '').trim();
+  if (bearer) {
+    try { jwt.verify(bearer, JWT_SECRET || FILE_TOKEN_SECRET); return next(); } catch {}
+  }
+
+  const requestPath = req.originalUrl || req.url;
+  console.warn(`[uploads] unauthorised request path=${requestPath} ua=${req.get('user-agent') || 'n/a'}`);
   res.status(401).send('Unauthorised');
 }, express.static(UPLOADS_DIR));
 
