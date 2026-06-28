@@ -115,6 +115,12 @@
   <script>
     let editorReady = false;
 
+    function markEditorReady() {
+      if (editorReady) return;
+      editorReady = true;
+      document.getElementById('loadingScreen').style.display = 'none';
+    }
+
     function step(msg, ok = true) {
       const el = document.getElementById('loadingSteps');
       if (el) el.innerHTML += `<div>${ok ? '✔' : '…'} ${msg}</div>`;
@@ -128,9 +134,13 @@
           ...config,
           events: {
             ...(config.events || {}),
+            onAppReady: function() {
+              // Some formats (for example CSV import flows) may not emit
+              // onDocumentReady immediately, but the editor is usable.
+              markEditorReady();
+            },
             onDocumentReady: function() {
-              editorReady = true;
-              document.getElementById('loadingScreen').style.display = 'none';
+              markEditorReady();
             },
             onError: function(event) {
               const data = event && event.data ? event.data : {};
@@ -153,7 +163,7 @@
               'Test the file URL below in a browser on the OnlyOffice server to confirm it is reachable.'
             );
           }
-        }, 20000);
+        }, 60000);
       } catch (e) {
         showError('Editor initialisation failed', e.message);
       }
