@@ -753,6 +753,29 @@ app.use('/uploads', (req, res, next) => {
   res.status(401).send('Unauthorised');
 }, express.static(UPLOADS_DIR));
 
+// Stable signed download endpoint for OnlyOffice fetches.
+// Using a path token (instead of query string) avoids proxy/cache layers
+// that may alter query parameters.
+app.get('/download/:id/:token', (req, res) => {
+  const { id, token } = req.params;
+  if (!id || !token) return res.status(401).send('Unauthorised');
+
+  try {
+    const payload = jwt.verify(token, FILE_TOKEN_SECRET);
+    if (!payload || payload.id !== id) return res.status(401).send('Unauthorised');
+  } catch {
+    return res.status(401).send('Unauthorised');
+  }
+
+  const entry = getFileByIdStmt.get(id);
+  if (!entry) return res.status(404).send('Not found');
+
+  const filePath = path.join(UPLOADS_DIR, entry.stored_name);
+  if (!fs.existsSync(filePath)) return res.status(404).send('Not found');
+
+  res.sendFile(filePath);
+});
+
 // ---- Health / reachability check (public) ----
 app.get('/ping', (_req, res) => {
   res.json({ ok: true, time: new Date().toISOString(), onlyofficeUrl: ONLYOFFICE_URL, appUrl: APP_URL });
@@ -974,7 +997,7 @@ app.get('/api/editor-config/:id', (req, res) => {
   const appBaseUrl = resolveAppUrl(req);
   // Sign a short-lived token so OnlyOffice can fetch the file without a session
   const fileToken = jwt.sign({ id: req.params.id }, FILE_TOKEN_SECRET, { expiresIn: '2h' });
-  const fileUrl = `${appBaseUrl}/uploads/${encodeURIComponent(entry.stored_name)}?t=${fileToken}`;
+  const fileUrl = `${appBaseUrl}/download/${encodeURIComponent(req.params.id)}/${encodeURIComponent(fileToken)}`;
   const callbackUrl = `${appBaseUrl}/api/callback/${req.params.id}`;
 
   const sessionUser = req.session?.user;
@@ -1032,7 +1055,7 @@ app.get('/api/debug/:id', (req, res) => {
 
   const appBaseUrl = resolveAppUrl(req);
   const fileToken = jwt.sign({ id: req.params.id }, FILE_TOKEN_SECRET, { expiresIn: '2h' });
-  const fileUrl = `${appBaseUrl}/uploads/${encodeURIComponent(entry.stored_name)}?t=${fileToken}`;
+  const fileUrl = `${appBaseUrl}/download/${encodeURIComponent(req.params.id)}/${encodeURIComponent(fileToken)}`;
   const callbackUrl = `${appBaseUrl}/api/callback/${req.params.id}`;
   const filePath = path.join(UPLOADS_DIR, entry.stored_name);
 
