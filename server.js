@@ -1202,6 +1202,98 @@ app.post('/api/files/:id/copy', (req, res) => {
   res.status(201).json({ ok: true, id: copyId, name: originalName });
 });
 
+function downloadUrlToFile(sourceUrl, destPath, redirectsLeft = 4) {
+  return new Promise((resolve, reject) => {
+    let parsed;
+    try {
+      parsed = new URL(sourceUrl);
+    } catch {
+      reject(new Error('Invalid source URL'));
+      return;
+    }
+
+    const httpLib = parsed.protocol === 'https:' ? require('https') : require('http');
+    const req = httpLib.get(parsed, (resp) => {
+      const status = Number(resp.statusCode || 0);
+
+      if ([301, 302, 303, 307, 308].includes(status) && resp.headers.location && redirectsLeft > 0) {
+        const redirectTo = new URL(resp.headers.location, parsed).toString();
+        resp.resume();
+        downloadUrlToFile(redirectTo, destPath, redirectsLeft - 1).then(resolve).catch(reject);
+        return;
+      }
+
+      if (status >= 400) {
+        resp.resume();
+        reject(new Error(`Download failed with HTTP ${status}`));
+        return;
+      }
+
+      const out = fs.createWriteStream(destPath);
+      resp.pipe(out);
+
+      out.on('finish', () => out.close(resolve));
+      out.on('error', (err) => reject(err));
+    });
+
+    req.on('error', (err) => reject(err));
+  });
+}
+
+app.post('/api/files/:id/save-copy', async (req, res) => {
+  const source = getFileByIdStmt.get(req.params.id);
+  if (!source) return res.status(404).json({ error: 'File not found' });
+
+  const manageError = getFileManageError(req, source);
+  if (manageError) return res.status(403).json({ error: manageError });
+  if (isTrashFolderId(source.folder_id)) return res.status(400).json({ error: 'Cannot save copy for files in the bin' });
+
+  const remoteUrl = String(req.body?.url || '').trim();
+  if (!remoteUrl) return res.status(400).json({ error: 'url is required' });
+
+  const requestedType = String(req.body?.fileType || '').trim().toLowerCase();
+  let originalName = String(req.body?.title || '').trim();
+  if (!originalName) {
+    const base = path.parse(source.original_name || 'Copy').name;
+    originalName = `${base} Copy${requestedType ? `.${requestedType}` : ''}`;
+  }
+
+  let info = extInfo(originalName);
+  if (!info && requestedType && EXT_MAP[requestedType]) {
+    originalName = `${path.parse(originalName).name}.${requestedType}`;
+    info = EXT_MAP[requestedType];
+  }
+  if (!info) return res.status(400).json({ error: 'Unsupported file type for saved copy' });
+
+  const safeName = originalName.replace(/[^a-zA-Z0-9._-]/g, '_').substring(0, 200);
+  const storedName = `${crypto.randomUUID().slice(0, 8)}_${safeName}`;
+  const destPath = path.join(UPLOADS_DIR, storedName);
+  const copyId = crypto.randomUUID();
+
+  try {
+    await downloadUrlToFile(remoteUrl, destPath);
+    const stat = fs.statSync(destPath);
+
+    insertFileStmt.run({
+      id: copyId,
+      original_name: originalName.substring(0, 200),
+      stored_name: storedName,
+      size: stat.size,
+      document_type: info.documentType,
+      file_type: info.fileType,
+      uploaded_at: new Date().toISOString(),
+      folder_id: source.folder_id,
+      space: source.space || 'shared',
+      owner_email: req.session.user.email,
+    });
+
+    res.status(201).json({ ok: true, id: copyId, name: originalName.substring(0, 200) });
+  } catch (err) {
+    if (fs.existsSync(destPath)) fs.unlinkSync(destPath);
+    res.status(502).json({ error: `Could not persist save copy file: ${err.message}` });
+  }
+});
+
 app.post('/api/files/:id/restore', (req, res) => {
   const entry = getFileByIdStmt.get(req.params.id);
   if (!entry) return res.status(404).json({ error: 'File not found' });

@@ -127,7 +127,7 @@
       document.getElementById('loadingMsg').textContent = msg;
     }
 
-    function initEditor(config) {
+    function initEditor(config, fileId) {
       step('api.js loaded — starting editor');
       try {
         const withEvents = {
@@ -141,6 +141,43 @@
             },
             onDocumentReady: function() {
               markEditorReady();
+            },
+            onRequestSaveAs: async function(event) {
+              const data = event && event.data ? event.data : {};
+              const url = data.url || '';
+              const title = data.title || 'document';
+              const fileType = data.fileType || '';
+              if (!url) {
+                showError('Save Copy failed', 'OnlyOffice did not provide a download URL.');
+                return;
+              }
+
+              step(`Saving copy into dashboard…`, false);
+              try {
+                const saveResp = await fetch(`/api/files/${encodeURIComponent(fileId)}/save-copy`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ url, title, fileType }),
+                });
+                if (!saveResp.ok) {
+                  const err = await saveResp.json().catch(() => ({}));
+                  throw new Error(err.error || `HTTP ${saveResp.status}`);
+                }
+                step(`Saved copy into dashboard: ${title}`);
+              } catch (e) {
+                step(`Save Copy storage failed: ${e.message}`);
+              }
+
+              // Required by OnlyOffice for the Save Copy as... menu item to appear.
+              const link = document.createElement('a');
+              link.href = url;
+              link.download = title;
+              link.rel = 'noopener';
+              link.target = '_blank';
+              document.body.appendChild(link);
+              link.click();
+              link.remove();
+              step(`Save Copy download started — ${title}`);
             },
             onError: function(event) {
               const data = event && event.data ? event.data : {};
@@ -210,7 +247,7 @@
       step(`Loading api.js from ${cfg.onlyofficeUrl}…`, false);
       const script = document.createElement('script');
       script.src = `${cfg.onlyofficeUrl}/web-apps/apps/api/documents/api.js?v=${Date.now()}`;
-      script.onload = () => initEditor(cfg.config);
+      script.onload = () => initEditor(cfg.config, fileId);
       script.onerror = () => showError(
         'Could not load OnlyOffice API',
         `Could not reach: ${cfg.onlyofficeUrl}/web-apps/apps/api/documents/api.js — is the Document Server running?`
